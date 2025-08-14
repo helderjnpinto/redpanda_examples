@@ -1,0 +1,155 @@
+input:
+  amqp_0_9:
+    urls:
+      - amqp://user:password@rabbitmq:5672/
+    queue: shopify_events
+    consumer_tag: benthos_consumer
+    prefetch_count: 10
+    prefetch_size: 0
+    queue_declare:
+      enabled: true
+      durable: true
+    bindings_declare:
+      - exchange: shopify
+        key: "#"
+
+pipeline:
+  processors:
+    # Parse JSON
+    - bloblang: |
+        root = this
+        
+        # Add metadata for event type and timestamp
+        meta event_type = this.type
+        meta timestamp = now().format("2006-01-02T15:04:05Z07:00")
+        
+        # Extract shop_id for multi-tenancy
+        meta shop_id = this.shop_id
+        
+        # Ensure shop_id is included in all event types
+        root.shop_id = this.shop_id
+        
+        # Transform product events
+        if this.type == "product_created" || this.type == "product_updated" {
+          root.product_id = this.id
+          root.title = this.title
+          root.vendor = this.vendor
+          root.product_type = this.product_type
+          root.created_at = this.created_at
+          root.updated_at = this.updated_at
+          root.variants_count = this.variants.length()
+          root.price_range = if this.variants.length() > 0 {
+            min_price = this.variants.map_each(v -> v.price.number()).sort().index(0)
+            max_price = this.variants.map_each(v -> v.price.number()).sort().index(-1)
+            root.min_price = min_price
+            root.max_price = max_price
+            root.currency = this.variants.index(0).price.currency
+          }
+          root.tags = this.tags.join(",")
+          root.status = this.status
+          delete root.variants
+          delete root.options
+          delete root.images
+        }
+        
+        # Transform order events
+        if this.type == "order_created" || this.type == "order_updated" {
+          root.order_id = this.id
+          root.order_number = this.order_number
+          root.customer_id = this.customer.id
+          root.email = this.email
+          root.total_price = this.total_price.number()
+          root.currency = this.currency
+          root.financial_status = this.financial_status
+          root.fulfillment_status = this.fulfillment_status
+          root.created_at = this.created_at
+          root.updated_at = this.updated_at
+          root.item_count = this.line_items.length()
+          root.total_discounts = this.total_discounts.number()
+          root.total_tax = this.total_tax.number()
+          delete root.line_items
+          delete root.shipping_lines
+          delete root.tax_lines
+          delete root.discount_codes
+        }
+        
+        # Transform subscription events
+        if this.type == "subscription_created" || this.type == "subscription_updated" {
+          root.subscription_id = this.id
+          root.customer_id = this.customer_id
+          root.status = this.status
+          root.created_at = this.created_at
+          root.updated_at = this.updated_at
+          root.next_billing_date = this.next_billing_date
+          root.interval = this.billing_interval.interval
+          root.interval_count = this.billing_interval.interval_count
+          root.product_id = this.product_id
+          root.variant_id = this.variant_id
+          root.quantity = this.quantity
+          root.price = this.price.number()
+          root.currency = this.price.currency
+        }
+
+output:
+  switch:
+    cases:
+      - check: meta("event_type") == "product_created" || meta("event_type") == "product_updated"
+        output:
+          clickhouse:
+            url: clickhouse://clickhouse:9000/analytics
+            table: products
+            username: default
+            password: ""
+            data_format: json
+            
+      - check: meta("event_type") == "order_created" || meta("event_type") == "order_updated"
+        output:
+          clickhouse:
+            url: clickhouse://clickhouse:9000/analytics
+            table: orders
+            username: default
+            password: ""
+            data_format: json
+            
+      - check: meta("event_type") == "subscription_created" || meta("event_type") == "subscription_updated"
+        output:
+          clickhouse:
+            url: clickhouse://clickhouse:9000/analytics
+            table: subscriptions
+            username: default
+            password: ""
+            data_format: json
+      
+    default:
+      # Catch-all for any other event types
+      clickhouse:
+        url: clickhouse://clickhouse:9000/analytics
+        table: events_raw
+        username: default
+        password: ""
+        data_format: json
+
+# HTTP server configuration for dashboard and metrics
+http:
+  enabled: true
+  address: 0.0.0.0:4195
+  root_path: /
+  debug_endpoints: true
+  cors:
+    enabled: true
+    allowed_origins:
+      - "*"
+
+# Metrics configuration
+metrics:
+  prometheus:
+    use_histogram_timing: true
+    histogram_buckets: [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+
+# Tracing configuration
+tracer:
+  jaeger:
+    enabled: false
+
+logger:
+  level: INFO 

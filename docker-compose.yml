@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # RabbitMQ - Source of Shopify event data
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management UI
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redpanda Connect - Stream processor for data transformation
+  benthos:
+    image: redpandadata/connect:latest
+    volumes:
+      - ./redpanda-config:/config
+    command: -c /config/pipeline.yaml
+    depends_on:
+      - rabbitmq
+      - clickhouse
+    ports:
+      - "4195:4195"  # Redpanda Connect HTTP API
+
+  # ClickHouse - Analytics database
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native interface
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-config:/etc/clickhouse-server/config.d
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  # Data generator - Simulates Shopify events
+  data-generator:
+    build:
+      context: ./data-generator
+      dockerfile: Dockerfile
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_USER=user
+      - RABBITMQ_PASS=password
+    depends_on:
+      - rabbitmq
+
+volumes:
+  rabbitmq_data:
+  clickhouse_data: 

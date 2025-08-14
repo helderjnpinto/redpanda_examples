@@ -1,0 +1,269 @@
+[
+    {
+        "label": "json",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "json",
+        "description": "json",
+        "detail": "json",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "random",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "random",
+        "description": "random",
+        "detail": "random",
+        "documentation": {}
+    },
+    {
+        "label": "time",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "time",
+        "description": "time",
+        "detail": "time",
+        "documentation": {}
+    },
+    {
+        "label": "uuid",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "uuid",
+        "description": "uuid",
+        "detail": "uuid",
+        "documentation": {}
+    },
+    {
+        "label": "datetime",
+        "importPath": "datetime",
+        "description": "datetime",
+        "isExtraImport": true,
+        "detail": "datetime",
+        "documentation": {}
+    },
+    {
+        "label": "timedelta",
+        "importPath": "datetime",
+        "description": "datetime",
+        "isExtraImport": true,
+        "detail": "datetime",
+        "documentation": {}
+    },
+    {
+        "label": "pika",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "pika",
+        "description": "pika",
+        "detail": "pika",
+        "documentation": {}
+    },
+    {
+        "label": "Faker",
+        "importPath": "faker",
+        "description": "faker",
+        "isExtraImport": true,
+        "detail": "faker",
+        "documentation": {}
+    },
+    {
+        "label": "CustomEncoder",
+        "kind": 6,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "class CustomEncoder(json.JSONEncoder):\n    def default(self, obj):\n        if callable(obj):\n            return obj()\n        return super().default(obj)\n# Connect to RabbitMQ\ndef connect_to_rabbitmq():\n    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)\n    parameters = pika.ConnectionParameters(\n        host=RABBITMQ_HOST,",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "random_date",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def random_date(days=30):\n    return datetime.now() - timedelta(days=random.randint(0, days))\n# Format date as ISO string\ndef format_date(date):\n    return date.isoformat()\n# Generate a random price\ndef random_price(min_price=5.0, max_price=1000.0):\n    return round(random.uniform(min_price, max_price), 2)\n# Generate a product variant\ndef generate_variant(product_id):",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "format_date",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def format_date(date):\n    return date.isoformat()\n# Generate a random price\ndef random_price(min_price=5.0, max_price=1000.0):\n    return round(random.uniform(min_price, max_price), 2)\n# Generate a product variant\ndef generate_variant(product_id):\n    price = random_price()\n    return {\n        'id': str(uuid.uuid4()),",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "random_price",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def random_price(min_price=5.0, max_price=1000.0):\n    return round(random.uniform(min_price, max_price), 2)\n# Generate a product variant\ndef generate_variant(product_id):\n    price = random_price()\n    return {\n        'id': str(uuid.uuid4()),\n        'product_id': product_id,\n        'title': fake.word().capitalize(),\n        'price': {",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "generate_variant",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def generate_variant(product_id):\n    price = random_price()\n    return {\n        'id': str(uuid.uuid4()),\n        'product_id': product_id,\n        'title': fake.word().capitalize(),\n        'price': {\n            'amount': str(price),\n            'currency': 'USD',\n            'number': lambda: price  # This is a hack for Bloblang to call",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "generate_product",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def generate_product():\n    product_id = str(uuid.uuid4())\n    created_at = random_date(60)\n    updated_at = created_at + timedelta(days=random.randint(0, 30))\n    variants_count = random.randint(1, 5)\n    variants = [generate_variant(product_id) for _ in range(variants_count)]\n    return {\n        'type': 'product_created' if random.random() < 0.3 else 'product_updated',\n        'id': product_id,\n        'shop_id': random.choice(SHOP_IDS),",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "generate_line_item",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def generate_line_item(product_id=None):\n    if not product_id:\n        product_id = str(uuid.uuid4())\n    price = random_price(10.0, 200.0)\n    quantity = random.randint(1, 5)\n    return {\n        'id': str(uuid.uuid4()),\n        'product_id': product_id,\n        'variant_id': str(uuid.uuid4()),\n        'title': fake.catch_phrase(),",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "generate_order",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def generate_order():\n    order_id = str(uuid.uuid4())\n    created_at = random_date(30)\n    updated_at = created_at + timedelta(hours=random.randint(0, 72))\n    line_items_count = random.randint(1, 10)\n    line_items = [generate_line_item() for _ in range(line_items_count)]\n    subtotal = sum(float(item['total_price']['amount']) for item in line_items)\n    tax_rate = 0.1  # 10% tax\n    tax = round(subtotal * tax_rate, 2)\n    discount = round(subtotal * random.uniform(0, 0.2), 2) if random.random() < 0.3 else 0",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "generate_subscription",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def generate_subscription():\n    subscription_id = str(uuid.uuid4())\n    product_id = str(uuid.uuid4())\n    variant_id = str(uuid.uuid4())\n    customer_id = str(uuid.uuid4())\n    created_at = random_date(90)\n    updated_at = created_at + timedelta(days=random.randint(0, 30))\n    next_billing_date = datetime.now() + timedelta(days=random.randint(1, 30))\n    price = random_price(10.0, 100.0)\n    quantity = random.randint(1, 3)",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "generate_event",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def generate_event():\n    event_type = random.choice(EVENT_TYPES)\n    if event_type in ['product_created', 'product_updated']:\n        return generate_product()\n    elif event_type in ['order_created', 'order_updated']:\n        return generate_order()\n    elif event_type in ['subscription_created', 'subscription_updated']:\n        return generate_subscription()\n# Custom JSON encoder to handle callable properties\nclass CustomEncoder(json.JSONEncoder):",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "connect_to_rabbitmq",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def connect_to_rabbitmq():\n    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)\n    parameters = pika.ConnectionParameters(\n        host=RABBITMQ_HOST,\n        credentials=credentials,\n        connection_attempts=10,\n        retry_delay=5\n    )\n    print(f\"Connecting to RabbitMQ at {RABBITMQ_HOST}...\")\n    connection = pika.BlockingConnection(parameters)",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "def main():\n    connection, channel = connect_to_rabbitmq()\n    try:\n        print(\"Starting to generate Shopify events...\")\n        while True:\n            event = generate_event()\n            event_type = event['type']\n            shop_id = event['shop_id']\n            # Serialize event to JSON\n            event_json = json.dumps(event, cls=CustomEncoder)",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "fake",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "fake = Faker()\n# RabbitMQ connection parameters\nRABBITMQ_HOST = os.environ.get('RABBITMQ_HOST', 'rabbitmq')\nRABBITMQ_USER = os.environ.get('RABBITMQ_USER', 'user')\nRABBITMQ_PASS = os.environ.get('RABBITMQ_PASS', 'password')\n# Event types\nEVENT_TYPES = [\n    'product_created',\n    'product_updated',\n    'order_created',",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "RABBITMQ_HOST",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "RABBITMQ_HOST = os.environ.get('RABBITMQ_HOST', 'rabbitmq')\nRABBITMQ_USER = os.environ.get('RABBITMQ_USER', 'user')\nRABBITMQ_PASS = os.environ.get('RABBITMQ_PASS', 'password')\n# Event types\nEVENT_TYPES = [\n    'product_created',\n    'product_updated',\n    'order_created',\n    'order_updated',\n    'subscription_created',",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "RABBITMQ_USER",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "RABBITMQ_USER = os.environ.get('RABBITMQ_USER', 'user')\nRABBITMQ_PASS = os.environ.get('RABBITMQ_PASS', 'password')\n# Event types\nEVENT_TYPES = [\n    'product_created',\n    'product_updated',\n    'order_created',\n    'order_updated',\n    'subscription_created',\n    'subscription_updated'",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "RABBITMQ_PASS",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "RABBITMQ_PASS = os.environ.get('RABBITMQ_PASS', 'password')\n# Event types\nEVENT_TYPES = [\n    'product_created',\n    'product_updated',\n    'order_created',\n    'order_updated',\n    'subscription_created',\n    'subscription_updated'\n]",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "EVENT_TYPES",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "EVENT_TYPES = [\n    'product_created',\n    'product_updated',\n    'order_created',\n    'order_updated',\n    'subscription_created',\n    'subscription_updated'\n]\n# Product types\nPRODUCT_TYPES = [",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "PRODUCT_TYPES",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "PRODUCT_TYPES = [\n    'Clothing',\n    'Shoes',\n    'Accessories',\n    'Electronics',\n    'Home',\n    'Beauty',\n    'Food',\n    'Books'\n]",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "ORDER_STATUSES",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "ORDER_STATUSES = [\n    'pending',\n    'processing',\n    'completed',\n    'cancelled',\n    'refunded'\n]\n# Subscription statuses\nSUBSCRIPTION_STATUSES = [\n    'active',",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "SUBSCRIPTION_STATUSES",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "SUBSCRIPTION_STATUSES = [\n    'active',\n    'paused',\n    'cancelled',\n    'expired'\n]\n# Sample shop IDs for multi-tenancy\nSHOP_IDS = [\n    'shop_1001',\n    'shop_1002',",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "SHOP_IDS",
+        "kind": 5,
+        "importPath": "data-generator.generator",
+        "description": "data-generator.generator",
+        "peekOfCode": "SHOP_IDS = [\n    'shop_1001',\n    'shop_1002',\n    'shop_1003',\n    'shop_1004',\n    'shop_1005'\n]\n# Generate a random date within the last 30 days\ndef random_date(days=30):\n    return datetime.now() - timedelta(days=random.randint(0, days))",
+        "detail": "data-generator.generator",
+        "documentation": {}
+    }
+]
