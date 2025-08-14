@@ -1,61 +1,71 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  # RabbitMQ - Source of Shopify event data
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"   # AMQP protocol
-      - "15672:15672" # Management UI
+  db:
+    image: postgres:16
     environment:
-      - RABBITMQ_DEFAULT_USER=user
-      - RABBITMQ_DEFAULT_PASS=password
+      POSTGRES_DB: redpanda_pipeline
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - ./postgres-init/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
-      test: ["CMD", "rabbitmqctl", "status"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U user -d redpanda_pipeline"]
+      interval: 5s
       timeout: 5s
       retries: 5
 
-  # Redpanda Connect - Stream processor for data transformation
-  benthos:
-    image: redpandadata/connect:latest
-    volumes:
-      - ./redpanda-config:/config
-    command: -c /config/pipeline.yaml
-    depends_on:
-      - rabbitmq
-      - clickhouse
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
     ports:
-      - "4195:4195"  # Redpanda Connect HTTP API
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-  # ClickHouse - Analytics database
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    ports:
-      - "8123:8123"   # HTTP interface
-      - "9000:9000"   # Native interface
+  redpanda-connect:
+    image: docker.redpanda.com/redpandadata/connect:latest
+    command:
+      - run
+      - /config.yaml
     volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - ./clickhouse-config:/etc/clickhouse-server/config.d
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-
-  # Data generator - Simulates Shopify events
-  data-generator:
-    build:
-      context: ./data-generator
-      dockerfile: Dockerfile
+      - ./redpanda-config/pipeline_sqlbatch.yaml:/config.yaml
     environment:
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_USER=user
-      - RABBITMQ_PASS=password
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: redpanda_pipeline
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
     depends_on:
-      - rabbitmq
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  init:
+    build:
+      context: ./init-scripts
+      dockerfile: Dockerfile
+    volumes:
+      - init-scripts:/app
+    command: python verify_rabbitmq.py
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db:
+        condition: service_healthy
 
 volumes:
-  rabbitmq_data:
-  clickhouse_data: 
+  init-scripts:
+
+networks:
+  default:
+    driver: bridge

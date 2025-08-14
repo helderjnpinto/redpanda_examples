@@ -78,6 +78,15 @@
         "documentation": {}
     },
     {
+        "label": "sys",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "sys",
+        "description": "sys",
+        "detail": "sys",
+        "documentation": {}
+    },
+    {
         "label": "CustomEncoder",
         "kind": 6,
         "importPath": "data-generator.generator",
@@ -264,6 +273,51 @@
         "description": "data-generator.generator",
         "peekOfCode": "SHOP_IDS = [\n    'shop_1001',\n    'shop_1002',\n    'shop_1003',\n    'shop_1004',\n    'shop_1005'\n]\n# Generate a random date within the last 30 days\ndef random_date(days=30):\n    return datetime.now() - timedelta(days=random.randint(0, days))",
         "detail": "data-generator.generator",
+        "documentation": {}
+    },
+    {
+        "label": "verify_rabbitmq",
+        "kind": 2,
+        "importPath": "init-scripts.verify_rabbitmq",
+        "description": "init-scripts.verify_rabbitmq",
+        "peekOfCode": "def verify_rabbitmq():\n    connection = None\n    try:\n        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))\n        channel = connection.channel()\n        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='fanout', durable=True)\n        result = channel.queue_declare(queue='default_queue', exclusive=True)\n        queue_name = result.method.queue\n        channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name)\n        received_messages = 0",
+        "detail": "init-scripts.verify_rabbitmq",
+        "documentation": {}
+    },
+    {
+        "label": "RABBITMQ_HOST",
+        "kind": 5,
+        "importPath": "init-scripts.verify_rabbitmq",
+        "description": "init-scripts.verify_rabbitmq",
+        "peekOfCode": "RABBITMQ_HOST = 'rabbitmq'\nEXCHANGE_NAME = 'user_data'\nMESSAGE_COUNT = 50\nTIMEOUT = 50\ndef verify_rabbitmq():\n    connection = None\n    try:\n        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))\n        channel = connection.channel()\n        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='fanout', durable=True)",
+        "detail": "init-scripts.verify_rabbitmq",
+        "documentation": {}
+    },
+    {
+        "label": "EXCHANGE_NAME",
+        "kind": 5,
+        "importPath": "init-scripts.verify_rabbitmq",
+        "description": "init-scripts.verify_rabbitmq",
+        "peekOfCode": "EXCHANGE_NAME = 'user_data'\nMESSAGE_COUNT = 50\nTIMEOUT = 50\ndef verify_rabbitmq():\n    connection = None\n    try:\n        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))\n        channel = connection.channel()\n        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='fanout', durable=True)\n        result = channel.queue_declare(queue='default_queue', exclusive=True)",
+        "detail": "init-scripts.verify_rabbitmq",
+        "documentation": {}
+    },
+    {
+        "label": "MESSAGE_COUNT",
+        "kind": 5,
+        "importPath": "init-scripts.verify_rabbitmq",
+        "description": "init-scripts.verify_rabbitmq",
+        "peekOfCode": "MESSAGE_COUNT = 50\nTIMEOUT = 50\ndef verify_rabbitmq():\n    connection = None\n    try:\n        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))\n        channel = connection.channel()\n        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='fanout', durable=True)\n        result = channel.queue_declare(queue='default_queue', exclusive=True)\n        queue_name = result.method.queue",
+        "detail": "init-scripts.verify_rabbitmq",
+        "documentation": {}
+    },
+    {
+        "label": "TIMEOUT",
+        "kind": 5,
+        "importPath": "init-scripts.verify_rabbitmq",
+        "description": "init-scripts.verify_rabbitmq",
+        "peekOfCode": "TIMEOUT = 50\ndef verify_rabbitmq():\n    connection = None\n    try:\n        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))\n        channel = connection.channel()\n        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type='fanout', durable=True)\n        result = channel.queue_declare(queue='default_queue', exclusive=True)\n        queue_name = result.method.queue\n        channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name)",
+        "detail": "init-scripts.verify_rabbitmq",
         "documentation": {}
     }
 ]

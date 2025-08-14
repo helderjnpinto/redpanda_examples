@@ -1,0 +1,84 @@
+logger:
+  level: DEBUG
+
+cache_resources:
+  - label: last_id_cache
+    memory:
+      init_values:
+        last_id: "0"
+
+input:
+  generate:
+    interval: '@every 10s'
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - branch:
+        request_map: 'root = {}'
+        processors:
+          - cache:
+              resource: last_id_cache
+              operator: get
+              key: last_id
+          - mapping: 'root = { "last_id": content().string().or("0") }'
+          - sql_raw:
+              driver: postgres
+              dsn: "postgres://user:password@db:5432/redpanda_pipeline?sslmode=disable"
+              query: "SELECT id, name, email FROM target_table WHERE id > $1 ORDER BY id ASC LIMIT 10;"
+              args_mapping: 'root = [ this.last_id.number().or(0) ]'
+        result_map: 'root.rows = this'
+
+    # Compute next cursor and move the rows array to the payload.
+    - mapping: |
+        let rows = this.rows.or([])
+        meta last_id_next = if $rows.length() > 0 { $rows.map_each(r -> r.id).max() } else { metadata("last_id").or(0) }
+        root = $rows
+
+    # # If no rows, emit a single debug log line (and continue; next step will produce 0 msgs).
+    # - switch:
+    #     cases:
+    #       - check: 'this.length() == 0'
+    #         processors:
+    #           - log:
+    #               level: DEBUG
+    #               message: 'No rows fetched (last_id=${! metadata("last_id") })'
+
+    # Persist the new cursor (unchanged if no rows)
+    - cache:
+        resource: last_id_cache
+        operator: set
+        key: last_id
+        value: '${! metadata("last_id_next") }'
+
+    # Expand the array to one message per row
+    - unarchive:
+        format: json_array
+
+    # Optional debug of each emitted row
+    - log:
+        level: DEBUG
+        message: fetched row
+        fields_mapping: |
+          root.id = this.id
+          root.name = this.name
+          root.email = this.email
+
+    # Final transformation (safe on nulls)
+    - mapping: |
+        root = {
+          "user_id": this.id,
+          "full_name": this.name.or("").uppercase(),
+          "contact": { "email": this.email.or("") },
+          "fetched_at": now()
+        }
+
+output:
+  amqp_0_9:
+    urls: [ "amqp://guest:guest@rabbitmq:5672/" ]
+    exchange: "user_data"
+    exchange_declare:
+      enabled: true
+      type: fanout
+    key: ""
+    content_type: application/json
