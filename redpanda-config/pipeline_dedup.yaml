@@ -1,12 +1,12 @@
 # ============================================
-# Redpanda Connect: SQL → ClickHouse (Deduped)
+# Redpanda Connect: PostgresQL → ClickHouse (Deduped)
 # ============================================
 
 http:
   enabled: true
   address: 0.0.0.0:4195
   root_path: /connect
-  debug_endpoints: false
+  debug_endpoints: true  # Enable debug endpoints for metrics
 
 input:
   label: fetch_postgres
@@ -15,8 +15,10 @@ input:
     dsn: postgres://user:password@db:5432/redpanda_pipeline?sslmode=disable
     table: target_table
     columns: ["*"]
-    # optional: poll periodically for new rows
-    poll_interval: 1m
+  processors:
+    - log:
+        level: INFO
+        message: "Fetched row from Postgres: ID=${! this.id }, Name=${! this.name }, Email=${! this.email }"
 
 buffer:
   none: {}
@@ -30,47 +32,41 @@ pipeline:
         root.name = this.name
         root.email = this.email
         root.event_id = this.id.string()
-
     # Deduplicate based on ID (using Redis)
     - dedupe:
         cache: keycache
         key: ${! this.event_id }
-        drop_on_cache: true
-        hash: none
-
-    # Log for debugging
-    - log:
-        level: DEBUG
-        message: "Processing event -> ${! this.event_id }"
 
 output:
-  label: clickhouse_output
+  sql_insert:
+    driver: clickhouse
+    dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+    table: events_raw
+    columns:
+      - id
+      - name
+      - email
+    args_mapping: |
+      root = [
+        this.id,
+        this.name,
+        this.email
+      ]
+    batching:
+      count: 1000
+      period: 10s
+  processors:
+    - log:
+        level: INFO
+        message: "Inserting to ClickHouse: ID=${! this.id }"
 
-output_resources:
-  - label: clickhouse_output
-    sql_insert:
-      driver: clickhouse
-      dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
-      table: events_raw
-      columns:
-        - id
-        - name
-        - email
-      args_mapping: |
-        root = [
-          this.id,
-          this.name,
-          this.email
-        ]
-      batching:
-        count: 1000
-        period: 10s
 # Redis cache to track processed keys
 cache_resources:
   - label: keycache
     redis:
       url: redis://redis:6379
-      ttl: 168h # 7 days retention of seen event IDs
-
-logger:
-  level: INFO
+      default_ttl: 60s
+      retries:
+        initial_interval: 500ms
+        max_interval: 1s
+        max_elapsed_time: 5s

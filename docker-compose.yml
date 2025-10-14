@@ -17,17 +17,17 @@ services:
       timeout: 5s
       retries: 5
 
-  rabbitmq:
-    image: rabbitmq:3-management
-    hostname: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+#   rabbitmq:
+#     image: rabbitmq:3-management
+#     hostname: rabbitmq
+#     ports:
+#       - "5672:5672"
+#       - "15672:15672"
+#     healthcheck:
+#       test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+#       interval: 5s
+#       timeout: 5s
+#       retries: 5
 
   redpanda-connect:
     image: docker.redpanda.com/redpandadata/connect:latest
@@ -46,26 +46,27 @@ services:
       RABBITMQ_PORT: 5672
       CLICKHOUSE_USER: user
       CLICKHOUSE_PASSWORD: password
+      CLICKHOUSE_DB: analytics
     depends_on:
       db:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+#       rabbitmq:
+#         condition: service_healthy
       clickhouse:
         condition: service_healthy
 
-  init:
-    build:
-      context: ./init-scripts
-      dockerfile: Dockerfile
-    volumes:
-      - init-scripts:/app
-    command: python verify_rabbitmq.py
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      db:
-        condition: service_healthy
+#   init:
+#     build:
+#       context: ./init-scripts
+#       dockerfile: Dockerfile
+#     volumes:
+#       - init-scripts:/app
+#     command: python verify_rabbitmq.py
+#     depends_on:
+#       rabbitmq:
+#         condition: service_healthy
+#       db:
+#         condition: service_healthy
 
   clickhouse:
     image: clickhouse/clickhouse-server:latest
@@ -74,6 +75,7 @@ services:
       - "9000:9000"  # Native interface
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse-config/init-db.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
       CLICKHOUSE_USER: user
       CLICKHOUSE_PASSWORD: password
@@ -83,7 +85,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
-
 
   redis:
     image: redis:7
