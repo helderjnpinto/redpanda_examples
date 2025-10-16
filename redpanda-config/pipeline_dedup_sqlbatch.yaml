@@ -1,7 +1,6 @@
 # ============================================
 # Redpanda Connect: PostgresQL → ClickHouse (Deduped + Batched)
 # ============================================
-
 input:
   generate:
     interval: '@every 5s' # Configure batch time
@@ -29,7 +28,7 @@ input:
         where: id > ?
         args_mapping: |
           root = [ this.last_id ]
-        suffix: ORDER BY id LIMIT 50
+        suffix: ORDER BY id LIMIT 25
 
     # Check if sql_select returned no rows and exit if empty
     - mapping: |
@@ -43,6 +42,9 @@ input:
             - log:
                 level: INFO
                 message: "No rows returned from database. Shutting down."
+            - command:
+                name: kill
+                args_mapping: '[ "1" ]'
 
 pipeline:
   processors:
