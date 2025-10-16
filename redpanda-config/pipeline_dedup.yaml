@@ -2,12 +2,6 @@
 # Redpanda Connect: PostgresQL → ClickHouse (Deduped)
 # ============================================
 
-http:
-  enabled: true
-  address: 0.0.0.0:4195
-  root_path: /connect
-  debug_endpoints: true  # Enable debug endpoints for metrics
-
 input:
   label: fetch_postgres
   sql_select:
@@ -20,11 +14,7 @@ input:
         level: INFO
         message: "Fetched row from Postgres: ID=${! this.id }, Name=${! this.name }, Email=${! this.email }"
 
-buffer:
-  none: {}
-
 pipeline:
-  threads: -1
   processors:
     # Map / normalize fields
     - bloblang: |
@@ -52,9 +42,6 @@ output:
         this.name,
         this.email
       ]
-    batching:
-      count: 1000
-      period: 10s
   processors:
     - log:
         level: INFO

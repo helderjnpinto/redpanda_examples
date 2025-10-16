@@ -2,41 +2,65 @@
 # Redpanda Connect: PostgresQL → ClickHouse (Deduped + Batched)
 # ============================================
 
-# TODO: Pass last_id to sql_select args_mapping
-
 input:
   generate:
-    interval: '@every 5s'
+    interval: '@every 5s' # Configure batch time
     mapping: 'root = {}'
   processors:
+    - branch:
+        processors:
+          - cache:
+              resource: batchcache
+              operator: get
+              key: last_id
+        result_map: 'root.last_id = this' # if the key exist in cache it will return its value
+
+      # We need this mapping because if this = null we can't convert directly to 0
+    - mapping: |
+        root.last_id = this.last_id.or(0)
     - log:
         level: INFO
-        message: "Teste 1"
+        message: "Fetching rows with id > ${! this.last_id }"
     - sql_select:
         driver: postgres
         dsn: postgres://user:password@db:5432/redpanda_pipeline?sslmode=disable
         table: target_table
         columns: [ "*" ]
         where: id > ?
-        args_mapping: '[ 0 ]'
-        suffix: ORDER BY id LIMIT 5
+        args_mapping: |
+          root = [ this.last_id ]
+        suffix: ORDER BY id LIMIT 50
 
-pipeline:
-  processors:
-    - log:
-        level: INFO
-        message: "Rows=${! this }"
-    - unarchive:
-        format: json_array
-    - dedupe:
-        cache: keycache
-        key: ${! this.id }
+    # Check if sql_select returned no rows and exit if empty
     - mapping: |
-        meta last_id = this.id
         root = this
     - log:
         level: INFO
-        message: "Processing ID = ${! this.id }"
+        message: "${! this.length() }}"
+    - switch:
+        - check: this.length() == 0
+          processors:
+            - log:
+                level: INFO
+                message: "No rows returned from database. Shutting down."
+
+pipeline:
+  processors:
+    - unarchive:
+        format: json_array
+    - mapping: |
+        root = this
+    - cache:
+        resource: batchcache
+        operator: set
+        key: last_id
+        value: ${! this.id }
+#    - log:
+#        level: INFO
+#        message: "Processing row ID=${! this.id }}"
+    - dedupe:
+        cache: keycache
+        key: ${! this.id }
 
 output:
   sql_insert:
@@ -53,13 +77,13 @@ output:
         this.name,
         this.email
       ]
-  processors:
-    - log:
-        level: INFO
-        message: "Inserting to ClickHouse: ID=${! this.id }"
+#  processors:
+#    - log:
+#        level: INFO
+#        message: "Inserting to ClickHouse: ID=${! this.id }"
 
-# Redis cache to track processed keys
 cache_resources:
+  # Redis cache to track processed keys
   - label: keycache
     redis:
       url: redis://redis:6379
@@ -68,3 +92,6 @@ cache_resources:
         initial_interval: 500ms
         max_interval: 1s
         max_elapsed_time: 5s
+  # Memory cache for last_id (batch mode)
+  - label: batchcache
+    memory: {}

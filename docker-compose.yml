@@ -10,7 +10,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./postgres-init/init-db-dedup-test.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./postgres-init/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d redpanda_pipeline"]
       interval: 5s
@@ -35,7 +35,7 @@ services:
       - run
       - /config.yaml
     volumes:
-      - ./redpanda-config/pipeline_dedup.yaml:/config.yaml
+      - ./redpanda-config/pipeline_dedup_sqlbatch.yaml:/config.yaml
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
