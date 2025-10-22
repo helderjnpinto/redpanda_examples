@@ -1,0 +1,119 @@
+# ============================================
+# Redpanda Connect: PostgresQL → ClickHouse (Deduped + Batched)
+# ============================================
+input:
+  generate:
+    interval: '@every 1s' # Configure batch time
+    mapping: 'root = {}'
+  processors:
+    - branch:
+        processors:
+          - cache:
+              resource: batchcache
+              operator: get
+              key: batch_number
+        result_map: 'root.batch_number = this' # if the key exist in cache it will return its value
+      # We need this mapping because if this = null we can't convert directly to 0
+    - mapping: |
+        root.batch_number = this.batch_number.or(0)
+    - log:
+        level: INFO
+        message: "Fetching rows with batch = ${! this.batch_number }"
+    - sql_raw:
+        driver: postgres
+        dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+        query: "SELECT md5(concat_ws('::','free-soul-sistas',o.created_at::text,'order_created',CASE WHEN 'Subscription Recurring Order' = ANY(o.tags) THEN 'recurring' WHEN 'Subscription First Order' = ANY(o.tags) THEN 'first' WHEN so.subscription_id IS NULL THEN 'onetime' ELSE 'other' END,s.id::text,o.id::text)) AS event_id,'free-soul-sistas' AS tenant_id,o.created_at AS event_time,'order_created' AS event_type,'active' AS status_after,so.subscription_id AS subscription_id,o.customer_id AS customer_id,CASE WHEN 'Subscription Recurring Order' = ANY(o.tags) THEN 'recurring' WHEN 'Subscription First Order' = ANY(o.tags) THEN 'first' WHEN subscription_id IS NULL THEN 'onetime' ELSE 'other' END AS revenue_type,coalesce((o.subtotal_price * 100)::bigint,0) AS price_cents,coalesce((o.total_tax * 100)::bigint,0) AS tax_cents,coalesce((s.delivery_price_amount * 100)::bigint,0) AS shipping_cents,CASE WHEN subscription_id IS NOT NULL THEN 30 ELSE 0 END AS interval_days,NULL AS plan_id,NULL AS region,o.source AS channel,o.currency AS currency,NULL AS cancellation_reason,NULL AS pause_reason FROM orders o LEFT JOIN subscription_orders so ON o.id = so.order_id LEFT JOIN subscriptions s ON so.subscription_id = s.id WHERE o.state NOT IN ('cancelled','refunded') ORDER BY event_time DESC LIMIT 5 OFFSET ($1 * 5);"
+        args_mapping: |
+          root = [ this.batch_number ]
+
+    # Check if sql_select returned no rows and exit if empty
+    - mapping: |
+        root = this
+    - log:
+        level: INFO
+        message: "${! this.length() }}"
+    - switch:
+        - check: this.length() == 0
+          processors:
+            - log:
+                level: INFO
+                message: "No rows returned from database. Shutting down."
+            - command:
+                name: kill
+                args_mapping: '[ "1" ]'
+
+pipeline:
+  processors:
+    - unarchive:
+        format: json_array
+    - mapping: |
+        root = this
+    - cache:
+        resource: batchcache
+        operator: set
+        key: batch_number
+        value: ${! root.batch_number } + 1
+    - dedupe:
+        cache: keycache
+        key: ${! this.event_id }
+
+output:
+  sql_insert:
+    driver: clickhouse
+    dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+    table: events_raw
+    columns:
+      - tenant_id
+      - event_time
+      - event_type
+      - status_after
+      - subscription_id
+      - customer_id
+      - revenue_type
+      - price_cents
+      - shipping_cents
+      - tax_cents
+      - interval_days
+      - plan_id
+      - region
+      - channel
+      - currency
+      - cancellation_reason
+      - pause_reason
+    args_mapping: |
+      root = [
+        this.tenant_id,
+        this.event_time,
+        this.event_type,
+        this.status_after,
+        this.subscription_id,
+        this.customer_id,
+        this.revenue_type,
+        this.price_cents,
+        this.shipping_cents,
+        this.tax_cents,
+        this.interval_days,
+        this.plan_id,
+        this.region,
+        this.channel,
+        this.currency,
+        this.cancellation_reason,
+        this.pause_reason
+      ]
+    batching:
+      count: 10000
+      period: 1s
+
+cache_resources:
+  # Redis cache to track processed keys
+  - label: keycache
+    redis:
+      url: redis://redis:6379
+      default_ttl: 60s
+      retries:
+        initial_interval: 500ms
+        max_interval: 1s
+        max_elapsed_time: 5s
+  # Memory cache for batch_count (batch mode)
+  - label: batchcache
+    memory: { }
