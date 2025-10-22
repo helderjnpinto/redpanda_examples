@@ -9,7 +9,6 @@ SELECT md5(
                            WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                            WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                            WHEN so.subscription_id IS NULL THEN 'onetime'
-                           ELSE 'other'
                            END,
                        s.id::text,
                        o.id::text
@@ -25,7 +24,6 @@ SELECT md5(
            WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
            WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
            WHEN subscription_id is NULL THEN 'onetime'
-           ELSE 'other'
            END                                    AS revenue_type,
        coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
        coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,

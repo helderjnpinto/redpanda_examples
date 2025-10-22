@@ -16,16 +16,67 @@ input:
       # We need this mapping because if this = null we can't convert directly to 0
     - mapping: |
         root.batch_number = this.batch_number.or(0)
+    - cache:
+        resource: batchcache
+        operator: set
+        key: batch_number
+        value: ${! this.batch_number + 1 }
     - log:
         level: INFO
         message: "Fetching rows with batch = ${! this.batch_number }"
     - sql_raw:
         driver: postgres
         dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
-        query: "SELECT md5(concat_ws('::','free-soul-sistas',o.created_at::text,'order_created',CASE WHEN 'Subscription Recurring Order' = ANY(o.tags) THEN 'recurring' WHEN 'Subscription First Order' = ANY(o.tags) THEN 'first' WHEN so.subscription_id IS NULL THEN 'onetime' ELSE 'other' END,s.id::text,o.id::text)) AS event_id,'free-soul-sistas' AS tenant_id,o.created_at AS event_time,'order_created' AS event_type,'active' AS status_after,so.subscription_id AS subscription_id,o.customer_id AS customer_id,CASE WHEN 'Subscription Recurring Order' = ANY(o.tags) THEN 'recurring' WHEN 'Subscription First Order' = ANY(o.tags) THEN 'first' WHEN subscription_id IS NULL THEN 'onetime' ELSE 'other' END AS revenue_type,coalesce((o.subtotal_price * 100)::bigint,0) AS price_cents,coalesce((o.total_tax * 100)::bigint,0) AS tax_cents,coalesce((s.delivery_price_amount * 100)::bigint,0) AS shipping_cents,CASE WHEN subscription_id IS NOT NULL THEN 30 ELSE 0 END AS interval_days,NULL AS plan_id,NULL AS region,o.source AS channel,o.currency AS currency,NULL AS cancellation_reason,NULL AS pause_reason FROM orders o LEFT JOIN subscription_orders so ON o.id = so.order_id LEFT JOIN subscriptions s ON so.subscription_id = s.id WHERE o.state NOT IN ('cancelled','refunded') ORDER BY event_time DESC LIMIT 5 OFFSET ($1 * 5);"
+        query: |
+          SELECT md5(
+                         concat_ws(
+                                 '::',
+                                 'free-soul-sistas',
+                                 o.created_at::text,
+                                 'order_created',
+                                 CASE
+                                     WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                                     WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                                     WHEN so.subscription_id IS NULL THEN 'onetime'
+                                     END,
+                                 s.id::text,
+                                 o.id::text
+                         )
+                 )                                                    AS event_id,
+                 'free-soul-sistas'                                   AS tenant_id,
+                 o.created_at                                         AS event_time,
+                 'order_created'                                      AS event_type,
+                 'active'                                             AS status_after, --TODO: 'active' para onetime ?
+                 so.subscription_id                                   AS subscription_id,
+                 o.customer_id                                        AS customer_id,
+                 CASE
+                     WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                     WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                     WHEN subscription_id is NULL THEN 'onetime'
+                     END                                              AS revenue_type,
+                 coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                 CASE
+                     WHEN subscription_id is NOT NULL THEN 30
+                     ELSE 0 -- onetime
+                     END                                              AS interval_days,
+                 NULL                                                 AS plan_id,
+                 NULL                                                 AS region,
+                 o.source                                             AS channel,
+                 o.currency                                           AS currency,
+                 NULL                                                 AS cancellation_reason,
+                 NULL                                                 AS pause_reason
+          FROM orders o
+                   LEFT JOIN subscription_orders so
+                             ON o.id = so.order_id
+                   LEFT JOIN subscriptions s
+                             ON so.subscription_id = s.id
+          WHERE o.state NOT IN ('cancelled', 'refunded')
+          ORDER BY event_time DESC
+          LIMIT $1 OFFSET $2;
         args_mapping: |
-          root = [ this.batch_number ]
-
+          root = [10000, this.batch_number * 10000 ]
     # Check if sql_select returned no rows and exit if empty
     - mapping: |
         root = this
@@ -48,11 +99,6 @@ pipeline:
         format: json_array
     - mapping: |
         root = this
-    - cache:
-        resource: batchcache
-        operator: set
-        key: batch_number
-        value: ${! root.batch_number } + 1
     - dedupe:
         cache: keycache
         key: ${! this.event_id }
