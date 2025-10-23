@@ -8,7 +8,6 @@ SELECT 'free-soul-sistas'                         AS tenant_id,
        CASE
            WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
            WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-           ELSE 'other'
            END                                    AS revenue_type,
        coalesce(o.subtotal_price * 100, 0)        AS price_cents,
        coalesce(o.total_tax * 100, 0)             AS tax_cents,
@@ -35,7 +34,6 @@ SELECT 'free-soul-sistas'                         AS tenant_id,
        CASE
            WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
            WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-           ELSE 'other'
            END                                    AS revenue_type,
        coalesce(o.subtotal_price * 100, 0)        AS price_cents,
        coalesce(o.total_tax * 100, 0)             AS tax_cents,
@@ -64,7 +62,6 @@ SELECT 'free-soul-sistas'                         AS tenant_id,
        CASE
            WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
            WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-           ELSE 'other'
            END                                    AS revenue_type,
        coalesce(o.subtotal_price * 100, 0)        AS price_cents,
        coalesce(o.total_tax * 100, 0)             AS tax_cents,
@@ -96,7 +93,6 @@ SELECT 'free-soul-sistas'                         AS tenant_id,
        CASE
            WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
            WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-           ELSE 'other'
            END                                    AS revenue_type,
        coalesce(o.subtotal_price * 100, 0)        AS price_cents,
        coalesce(o.total_tax * 100, 0)             AS tax_cents,
@@ -119,8 +115,8 @@ WHERE curr_st.to_state = 'active'
   AND prev_st.to_state IN ('paused', 'cancelled')
   AND o.state NOT IN ('cancelled', 'refunded');
 
--- select event_type, count(*)from subscription_events
--- group by event_type;
+select event_type, count(*)from subscription_events
+group by event_type;
 
 -- select * from subscriptions;
 

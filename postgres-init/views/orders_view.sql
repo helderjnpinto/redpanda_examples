@@ -1,4 +1,3 @@
-CREATE OR REPLACE VIEW orders_events AS
 SELECT md5(
                concat_ws(
                        '::',

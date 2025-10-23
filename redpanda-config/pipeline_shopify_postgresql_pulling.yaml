@@ -6,24 +6,23 @@ input:
     interval: '@every 1s' # Configure batch time
     mapping: 'root = {}'
   processors:
-    - branch:
-        processors:
-          - cache:
-              resource: batchcache
-              operator: get
-              key: last_date
-        result_map: 'root.batch_number = this' # if the key exist in cache it will return its value
-      # We need this mapping because if this = null we can't convert directly to 0
+    - sql_raw:
+        driver: clickhouse
+        dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+        query: |
+          SELECT event_time
+          FROM events_raw
+          ORDER BY event_time DESC
+          LIMIT 1;
     - mapping: |
-        root.batch_number = this.batch_number.or(0)
-    - cache:
-        resource: batchcache
-        operator: set
-        key: batch_number
-        value: ${! this.batch_number + 1 }
+        root = this
+    - unarchive:
+        format: json_array
+    - mapping: |
+        root = this
     - log:
         level: INFO
-        message: "Fetching rows with batch = ${! this.batch_number }"
+        message: "Fetching rows with date >= ${! this.event_time }"
     - sql_raw:
         driver: postgres
         dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
@@ -74,25 +73,16 @@ input:
                              ON so.subscription_id = s.id
           WHERE o.state NOT IN ('cancelled', 'refunded')
           AND o.created_at > $1
-          ORDER BY event_time;
+          ORDER BY event_time
+          LIMIT 1;
         args_mapping: |
-          root = [ this.date ]
-    # TODO: adicionar valor correto
+          root = [ this.event_time ]
     # Check if sql_select returned no rows and exit if empty
     - mapping: |
         root = this
     - log:
         level: INFO
         message: "${! this.length() }}"
-    - switch:
-        - check: this.length() == 0
-          processors:
-            - log:
-                level: INFO
-                message: "No rows returned from database. Shutting down."
-            - command:
-                name: kill
-                args_mapping: '[ "1" ]'
 
 pipeline:
   processors:
@@ -103,7 +93,6 @@ pipeline:
     - dedupe:
         cache: keycache
         key: ${! this.event_id }
-    #TODO: adicionar ultima data inserida na cache
 
 output:
   sql_insert:

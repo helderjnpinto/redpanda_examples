@@ -76,7 +76,7 @@ input:
           ORDER BY event_time DESC
           LIMIT $1 OFFSET $2;
         args_mapping: |
-          root = [10000, this.batch_number * 10000 ]
+          root = [20000, this.batch_number * 20000 ]
     # Check if sql_select returned no rows and exit if empty
     - mapping: |
         root = this
@@ -147,7 +147,7 @@ output:
         this.pause_reason
       ]
     batching:
-      count: 10000
+      count: 20000
       period: 1s
 
 cache_resources:
