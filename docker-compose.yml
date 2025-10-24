@@ -3,13 +3,15 @@ version: "3.8"
 services:
   db:
     image: postgres:16
+    shm_size: 1g
     environment:
       POSTGRES_DB: shopify_data_pruned
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
     ports:
       - "5432:5432"
-    # volumes:
+    volumes:
+     - postgres-data:/var/lib/postgresql/data
     #  - ./postgres-init/init-db-shopify.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d shopify_data_pruned"]
@@ -102,7 +104,7 @@ services:
       retries: 5
 
 volumes:
-  init-scripts:
+  postgres-data:
   clickhouse-data:
     driver: local
 
