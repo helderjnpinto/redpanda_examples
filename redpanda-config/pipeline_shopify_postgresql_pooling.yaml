@@ -3,7 +3,7 @@
 # ============================================
 input:
   generate:
-    interval: '@every 1s' # Configure batch time
+    interval: '10s' # Configure batch time
     mapping: 'root = {}'
   processors:
     - sql_raw:

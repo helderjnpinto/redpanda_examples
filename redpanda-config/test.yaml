@@ -1,0 +1,475 @@
+# ============================================
+# Redpanda Connect: PostgresQL → ClickHouse (Deduped + Batched)
+# ============================================
+input:
+  generate:
+    interval: "5s" # Configure batch time
+    mapping: "root = {}"
+  processors:
+    - branch:
+        processors:
+          - cache:
+              resource: batchcache
+              operator: get
+              key: batch_number
+        result_map: "root.batch_number = this" # if the key exist in cache it will return its value
+      # We need this mapping because if this = null we can't convert directly to 0
+    - mapping: |
+        root.batch_number = this.batch_number.or(0)
+    - cache:
+        resource: batchcache
+        operator: set
+        key: batch_number
+        value: ${! this.batch_number + 1 }
+    - log:
+        level: INFO
+        message: "Fetching rows with batch = ${! this.batch_number }"
+    - sql_raw:
+        driver: postgres
+        dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+        query: |
+          SELECT *
+          FROM (SELECT md5(
+                          concat_ws(
+                                  '::',
+                                  'free-soul-sistas',
+                                  o.created_at::text,
+                                  'order_created',
+                                  CASE
+                                      WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                                      WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                                      WHEN so.subscription_id IS NULL THEN 'onetime'
+                                      END,
+                                  s.id::text,
+                                  o.id::text
+                          )
+                  )                                                    AS event_id,
+                  'free-soul-sistas'                                   AS tenant_id,
+                  o.created_at                                         AS event_time,
+                  'order_created'                                      AS event_type,
+                  'active'                                             AS status_after,
+                  so.subscription_id                                   AS subscription_id,
+                  o.customer_id                                        AS customer_id,
+                  CASE
+                      WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                      WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                      WHEN subscription_id is NULL THEN 'onetime'
+                      END                                              AS revenue_type,
+                  coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                  coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                  coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                  CASE
+                      WHEN subscription_id is NOT NULL THEN 30
+                      ELSE 0 -- onetime
+                      END                                              AS interval_days,
+                  NULL                                                 AS plan_id,
+                  NULL                                                 AS region,
+                  o.source                                             AS channel,
+                  o.currency                                           AS currency,
+                  NULL                                                 AS cancellation_reason,
+                  NULL                                                 AS pause_reason
+           FROM orders o
+                    LEFT JOIN subscription_orders so
+                              ON o.id = so.order_id
+                    LEFT JOIN subscriptions s
+                              ON so.subscription_id = s.id
+           WHERE o.state NOT IN ('cancelled', 'refunded')
+
+          UNION ALL
+
+          SELECT md5(
+          concat_ws(
+          '::',
+          'free-soul-sistas',
+          s.created_at::text,
+          'sub_created',
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END,
+          s.id::text,
+          o.id::text
+          )
+          )                                          AS event_id,
+          'free-soul-sistas'                         AS tenant_id,
+          s.created_at                               AS event_time,
+          'sub_created'                              AS event_type,
+          'active'                                   AS status_after,
+          s.id                                       AS subscription_id,
+          s.customer_id                              AS customer_id,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END                                    AS revenue_type,
+          coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+          coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+          coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+          30                                         AS interval_days,
+          NULL                                       AS plan_id,
+          NULL                                       AS region,
+          s.source                                   AS channel,
+          s.currency_code                            AS currency,
+          NULL                                       AS cancellation_reason,
+          NULL                                       AS pause_reason
+          FROM subscriptions s
+          JOIN orders o on s.origin_order_id = o.id
+          WHERE o.state NOT IN ('cancelled', 'refunded')
+
+          UNION ALL
+
+          SELECT md5(
+          concat_ws(
+          '::',
+          'free-soul-sistas',
+          st.created_at::text,
+          'sub_paused',
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END,
+          s.id::text,
+          o.id::text
+          )
+          )                                          AS event_id,
+          'free-soul-sistas'                         AS tenant_id,
+          st.created_at                              AS event_time,
+          'sub_paused'                               AS event_type,
+          'paused'                                   AS status_after,
+          st.subscription_id                         AS subscription_id,
+          s.customer_id                              AS customer_id,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END                                    AS revenue_type,
+          coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+          coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+          coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+          30                                         AS interval_days,
+          NULL                                       AS plan_id,
+          NULL                                       AS region,
+          s.source                                   AS channel,
+          s.currency_code                            AS currency,
+          NULL                                       AS cancellation_reason,
+          NULL                                       AS pause_reason
+          FROM subscription_transitions st
+          JOIN subscriptions s ON st.subscription_id = s.id
+          JOIN orders o on s.origin_order_id = o.id
+          WHERE to_state IN ('paused', 'skipped')
+          AND o.state NOT IN ('cancelled', 'refunded')
+
+           UNION ALL
+
+          SELECT md5(
+          concat_ws(
+          '::',
+          'free-soul-sistas',
+          st.created_at::text,
+          'sub_cancelled',
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END,
+          s.id::text,
+          o.id::text
+          )
+          )                                          AS event_id,
+          'free-soul-sistas'                         AS tenant_id,
+          st.created_at                              AS event_time,
+          'sub_cancelled'                            AS event_type,
+          'cancelled'                                AS status_after,
+          st.subscription_id                         AS subscription_id,
+          s.customer_id                              AS customer_id,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END                                    AS revenue_type,
+          coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+          coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+          coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+          30                                         AS interval_days,
+          NULL                                       AS plan_id,
+          NULL                                       AS region,
+          s.source                                   AS channel,
+          s.currency_code                            AS currency,
+          coalesce(s.cancellation_reason, 'Other')   AS cancellation_reason,
+          NULL                                       AS pause_reason
+          FROM subscription_transitions st
+          JOIN subscriptions s ON st.subscription_id = s.id
+          JOIN orders o on s.origin_order_id = o.id
+          WHERE to_state IN ('cancelled', 'failed')
+          AND o.state NOT IN ('cancelled', 'refunded')
+
+          UNION ALL
+
+          SELECT md5(
+          concat_ws(
+          '::',
+          'free-soul-sistas',
+          curr_st.created_at::text,
+          CASE prev_st.to_state
+          WHEN 'paused' THEN 'sub_resumed'
+          WHEN 'cancelled' THEN 'sub_reactivated'
+          END,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END,
+          s.id::text,
+          o.id::text
+          )
+          )                                          AS event_id,
+          'free-soul-sistas'                         AS tenant_id,
+          curr_st.created_at                         AS event_time,
+          CASE prev_st.to_state
+          WHEN 'paused' THEN 'sub_resumed'
+          WHEN 'cancelled' THEN 'sub_reactivated'
+          END                                    AS event_type,
+          'active'                                   AS status_after,
+          curr_st.subscription_id                    AS subscription_id,
+          s.customer_id                              AS customer_id,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END                                    AS revenue_type,
+          coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+          coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+          coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+          30                                         AS interval_days,
+          NULL                                       AS plan_id,
+          NULL                                       AS region,
+          s.source                                   AS channel,
+          s.currency_code                            AS currency,
+          NULL                                       AS cancellation_reason,
+          NULL                                       AS pause_reason
+          FROM subscription_transitions curr_st
+          JOIN subscription_transitions prev_st
+          ON prev_st.subscription_id = curr_st.subscription_id
+          AND prev_st.sort_key = curr_st.sort_key - 10
+          JOIN subscriptions s ON curr_st.subscription_id = s.id
+          JOIN orders o on s.origin_order_id = o.id
+          WHERE curr_st.to_state = 'active'
+          AND curr_st.sort_key != 10
+          AND prev_st.to_state IN ('paused', 'cancelled')
+          AND o.state NOT IN ('cancelled', 'refunded')
+
+          UNION ALL
+
+          SELECT md5(
+          concat_ws(
+          '::',
+          'free-soul-sistas',
+          d.created_at::text,
+          'dunning_entered',
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END,
+          s.id::text,
+          o.id::text
+          )
+          )                                          AS event_id,
+          'free-soul-sistas'                         AS tenant_id,
+          d.created_at                               AS event_time,
+          'dunning_entered'                          AS event_type,
+          'dunning'                                  AS status_after,
+          d.subscription_id                          AS subscription_id,
+          s.customer_id                              AS customer_id,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END                                    AS revenue_type,
+          coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+          coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+          coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+          30                                         AS interval_days,
+          NULL                                       AS plan_id,
+          NULL                                       AS region,
+          o.source                                   AS channel,
+          o.currency                                 AS currency,
+          NULL                                       AS cancellation_reason,
+          NULL                                       AS pause_reason
+          FROM dunning_counters d
+          JOIN subscriptions s on d.subscription_id = s.id
+          JOIN orders o on s.origin_order_id = o.id
+          WHERE d.type = 'FailedBillingCounter'
+          AND d.state = 'closed'
+          AND o.state NOT IN ('cancelled', 'refunded')
+
+          UNION ALL
+
+          SELECT md5(
+          concat_ws(
+          '::',
+          'free-soul-sistas',
+          d.updated_at::text,
+          'dunning_exited',
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END,
+          s.id::text,
+          o.id::text
+          )
+          )                                                                    AS event_id,
+          'free-soul-sistas'                                                   AS tenant_id,
+          d.updated_at                                                         AS event_time,
+          'dunning_exited'                                                     AS event_type,
+          'cancelled'                                                          AS status_after,
+          d.subscription_id                                                    AS subscription_id,
+          s.customer_id                                                        AS customer_id,
+          CASE
+          WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+          WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+          END                                                              AS revenue_type,
+          coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+          coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+          coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+          30                                                                   AS interval_days,
+          NULL                                                                 AS plan_id,
+          NULL                                                                 AS region,
+          o.source                                                             AS channel,
+          o.currency                                                           AS currency,
+          coalesce(s.cancellation_reason,
+          'Failed due to exceeding maximum allowed failed billings.') AS cancellation_reason,
+          NULL                                                                 AS pause_reason
+          FROM dunning_counters d
+          JOIN subscriptions s on d.subscription_id = s.id
+          JOIN orders o on s.origin_order_id = o.id
+          WHERE d.type = 'FailedBillingCounter'
+          AND d.state = 'closed'
+          AND failed_cycles = max_failed_cycles
+          AND o.state NOT IN ('cancelled', 'refunded')
+
+           UNION ALL
+
+           SELECT md5(
+                          concat_ws(
+                                  '::',
+                                  'free-soul-sistas',
+                                  d.updated_at::text,
+                                  'dunning_recovered',
+                                  CASE
+                                      WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                                      WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                                      END,
+                                  s.id::text,
+                                  o.id::text
+                          )
+                  )                                          AS event_id,
+                  'free-soul-sistas'                         AS tenant_id,
+                  d.updated_at                               AS event_time,
+                  'dunning_recovered'                        AS event_type,
+                  'active'                                   AS status_after,
+                  d.subscription_id                          AS subscription_id,
+                  s.customer_id                              AS customer_id,
+                  CASE
+                      WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                      WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                      END                                    AS revenue_type,
+                  coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                  coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                  coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                  30                                         AS interval_days,
+                  NULL                                       AS plan_id,
+                  NULL                                       AS region,
+                  o.source                                   AS channel,
+                  o.currency                                 AS currency,
+                  NULL                                       AS cancellation_reason,
+                  NULL                                       AS pause_reason
+           FROM dunning_counters d
+                    JOIN subscriptions s on d.subscription_id = s.id
+                    JOIN orders o on s.origin_order_id = o.id
+           WHERE d.type = 'FailedBillingCounter'
+             AND d.state = 'closed'
+             AND failed_cycles < max_failed_cycles
+             AND o.state NOT IN ('cancelled', 'refunded')) AS combined_events
+          ORDER BY event_time DESC
+          LIMIT $1 OFFSET $2;
+        args_mapping: |
+          root = [5000, this.batch_number * 5000]
+    # Check if sql_select returned no rows and exit if empty
+    - mapping: |
+        root = this
+    - log:
+        level: INFO
+        message: "${! this.length() }}"
+    - switch:
+        - check: this.length() == 0
+          processors:
+            - log:
+                level: INFO
+                message: "No rows returned from database. Shutting down."
+            - command:
+                name: kill
+                args_mapping: '[ "1" ]'
+
+pipeline:
+  processors:
+    - unarchive:
+        format: json_array
+    - mapping: |
+        root = this
+    - dedupe:
+        cache: keycache
+        key: ${! this.event_id }
+
+output:
+  sql_insert:
+    driver: clickhouse
+    dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+    table: events_raw
+    columns:
+      - tenant_id
+      - event_time
+      - event_type
+      - status_after
+      - subscription_id
+      - customer_id
+      - revenue_type
+      - price_cents
+      - shipping_cents
+      - tax_cents
+      - interval_days
+      - plan_id
+      - region
+      - channel
+      - currency
+      - cancellation_reason
+      - pause_reason
+    args_mapping: |
+      root = [
+        this.tenant_id,
+        this.event_time,
+        this.event_type,
+        this.status_after,
+        this.subscription_id,
+        this.customer_id,
+        this.revenue_type,
+        this.price_cents,
+        this.shipping_cents,
+        this.tax_cents,
+        this.interval_days,
+        this.plan_id,
+        this.region,
+        this.channel,
+        this.currency,
+        this.cancellation_reason,
+        this.pause_reason
+      ]
+    batching:
+      count: 20000
+      period: 1s
+
+cache_resources:
+  # Redis cache to track processed keys
+  - label: keycache
+    redis:
+      url: redis://redis:6379
+      default_ttl: 1s
+      retries:
+        initial_interval: 500ms
+        max_interval: 1s
+        max_elapsed_time: 5s
+  # Memory cache for batch_count (batch mode)
+  - label: batchcache
+    memory: {}
