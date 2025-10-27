@@ -23,16 +23,19 @@ FROM (SELECT md5(
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 WHEN subscription_id is NULL THEN 'onetime'
+                 WHEN so.subscription_id is NULL THEN 'onetime'
                  END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
              CASE
-                 WHEN subscription_id is NOT NULL THEN 30
-                 ELSE 0 -- onetime
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
                  END                                              AS interval_days,
-             NULL                                                 AS plan_id,
+             bp.id                                                AS plan_id,
              NULL                                                 AS region,
              o.source                                             AS channel,
              o.currency                                           AS currency,
@@ -43,6 +46,7 @@ FROM (SELECT md5(
                          ON o.id = so.order_id
                LEFT JOIN subscriptions s
                          ON so.subscription_id = s.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE o.state NOT IN ('cancelled', 'refunded')
 
       UNION ALL
@@ -60,29 +64,36 @@ FROM (SELECT md5(
                              s.id::text,
                              o.id::text
                      )
-             )                                          AS event_id,
-             'free-soul-sistas'                         AS tenant_id,
-             s.created_at                               AS event_time,
-             'sub_created'                              AS event_type,
-             'active'                                   AS status_after,
-             s.id                                       AS subscription_id,
-             s.customer_id                              AS customer_id,
+             )                                                    AS event_id,
+             'free-soul-sistas'                                   AS tenant_id,
+             s.created_at                                         AS event_time,
+             'sub_created'                                        AS event_type,
+             'active'                                             AS status_after,
+             s.id                                                 AS subscription_id,
+             s.customer_id                                        AS customer_id,
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 END                                    AS revenue_type,
+                 END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                         AS interval_days,
-             NULL                                       AS plan_id,
-             NULL                                       AS region,
-             s.source                                   AS channel,
-             s.currency_code                            AS currency,
-             NULL                                       AS cancellation_reason,
-             NULL                                       AS pause_reason
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                              AS interval_days,
+             bp.id                                                AS plan_id,
+             NULL                                                 AS region,
+             s.source                                             AS channel,
+             s.currency_code                                      AS currency,
+             NULL                                                 AS cancellation_reason,
+             NULL                                                 AS pause_reason
       FROM subscriptions s
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE o.state NOT IN ('cancelled', 'refunded')
 
       UNION ALL
@@ -100,30 +111,37 @@ FROM (SELECT md5(
                              s.id::text,
                              o.id::text
                      )
-             )                                          AS event_id,
-             'free-soul-sistas'                         AS tenant_id,
-             st.created_at                              AS event_time,
-             'sub_paused'                               AS event_type,
-             'paused'                                   AS status_after,
-             st.subscription_id                         AS subscription_id,
-             s.customer_id                              AS customer_id,
+             )                                                    AS event_id,
+             'free-soul-sistas'                                   AS tenant_id,
+             st.created_at                                        AS event_time,
+             'sub_paused'                                         AS event_type,
+             'paused'                                             AS status_after,
+             st.subscription_id                                   AS subscription_id,
+             s.customer_id                                        AS customer_id,
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 END                                    AS revenue_type,
+                 END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                         AS interval_days,
-             NULL                                       AS plan_id,
-             NULL                                       AS region,
-             s.source                                   AS channel,
-             s.currency_code                            AS currency,
-             NULL                                       AS cancellation_reason,
-             NULL                                       AS pause_reason
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                              AS interval_days,
+             bp.id                                                AS plan_id,
+             NULL                                                 AS region,
+             s.source                                             AS channel,
+             s.currency_code                                      AS currency,
+             NULL                                                 AS cancellation_reason,
+             NULL                                                 AS pause_reason
       FROM subscription_transitions st
                JOIN subscriptions s ON st.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE to_state IN ('paused', 'skipped')
         AND o.state NOT IN ('cancelled', 'refunded')
 
@@ -142,30 +160,37 @@ FROM (SELECT md5(
                              s.id::text,
                              o.id::text
                      )
-             )                                          AS event_id,
-             'free-soul-sistas'                         AS tenant_id,
-             st.created_at                              AS event_time,
-             'sub_cancelled'                            AS event_type,
-             'cancelled'                                AS status_after,
-             st.subscription_id                         AS subscription_id,
-             s.customer_id                              AS customer_id,
+             )                                                    AS event_id,
+             'free-soul-sistas'                                   AS tenant_id,
+             st.created_at                                        AS event_time,
+             'sub_cancelled'                                      AS event_type,
+             'cancelled'                                          AS status_after,
+             st.subscription_id                                   AS subscription_id,
+             s.customer_id                                        AS customer_id,
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 END                                    AS revenue_type,
+                 END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                         AS interval_days,
-             NULL                                       AS plan_id,
-             NULL                                       AS region,
-             s.source                                   AS channel,
-             s.currency_code                            AS currency,
-             coalesce(s.cancellation_reason, 'Other')   AS cancellation_reason,
-             NULL                                       AS pause_reason
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                              AS interval_days,
+             bp.id                                                AS plan_id,
+             NULL                                                 AS region,
+             s.source                                             AS channel,
+             s.currency_code                                      AS currency,
+             coalesce(s.cancellation_reason, 'Other')             AS cancellation_reason,
+             NULL                                                 AS pause_reason
       FROM subscription_transitions st
                JOIN subscriptions s ON st.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE to_state IN ('cancelled', 'failed')
         AND o.state NOT IN ('cancelled', 'refunded')
 
@@ -187,36 +212,43 @@ FROM (SELECT md5(
                              s.id::text,
                              o.id::text
                      )
-             )                                          AS event_id,
-             'free-soul-sistas'                         AS tenant_id,
-             curr_st.created_at                         AS event_time,
+             )                                                    AS event_id,
+             'free-soul-sistas'                                   AS tenant_id,
+             curr_st.created_at                                   AS event_time,
              CASE prev_st.to_state
                  WHEN 'paused' THEN 'sub_resumed'
                  WHEN 'cancelled' THEN 'sub_reactivated'
-                 END                                    AS event_type,
-             'active'                                   AS status_after,
-             curr_st.subscription_id                    AS subscription_id,
-             s.customer_id                              AS customer_id,
+                 END                                              AS event_type,
+             'active'                                             AS status_after,
+             curr_st.subscription_id                              AS subscription_id,
+             s.customer_id                                        AS customer_id,
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 END                                    AS revenue_type,
+                 END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                         AS interval_days,
-             NULL                                       AS plan_id,
-             NULL                                       AS region,
-             s.source                                   AS channel,
-             s.currency_code                            AS currency,
-             NULL                                       AS cancellation_reason,
-             NULL                                       AS pause_reason
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                              AS interval_days,
+             bp.id                                                AS plan_id,
+             NULL                                                 AS region,
+             s.source                                             AS channel,
+             s.currency_code                                      AS currency,
+             NULL                                                 AS cancellation_reason,
+             NULL                                                 AS pause_reason
       FROM subscription_transitions curr_st
                JOIN subscription_transitions prev_st
                     ON prev_st.subscription_id = curr_st.subscription_id
                         AND prev_st.sort_key = curr_st.sort_key - 10
                JOIN subscriptions s ON curr_st.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE curr_st.to_state = 'active'
         AND curr_st.sort_key != 10
         AND prev_st.to_state IN ('paused', 'cancelled')
@@ -237,30 +269,37 @@ FROM (SELECT md5(
                              s.id::text,
                              o.id::text
                      )
-             )                                          AS event_id,
-             'free-soul-sistas'                         AS tenant_id,
-             d.created_at                               AS event_time,
-             'dunning_entered'                          AS event_type,
-             'dunning'                                  AS status_after,
-             d.subscription_id                          AS subscription_id,
-             s.customer_id                              AS customer_id,
+             )                                                    AS event_id,
+             'free-soul-sistas'                                   AS tenant_id,
+             d.created_at                                         AS event_time,
+             'dunning_entered'                                    AS event_type,
+             'dunning'                                            AS status_after,
+             d.subscription_id                                    AS subscription_id,
+             s.customer_id                                        AS customer_id,
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 END                                    AS revenue_type,
+                 END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                         AS interval_days,
-             NULL                                       AS plan_id,
-             NULL                                       AS region,
-             o.source                                   AS channel,
-             o.currency                                 AS currency,
-             NULL                                       AS cancellation_reason,
-             NULL                                       AS pause_reason
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                              AS interval_days,
+             bp.id                                                AS plan_id,
+             NULL                                                 AS region,
+             o.source                                             AS channel,
+             o.currency                                           AS currency,
+             NULL                                                 AS cancellation_reason,
+             NULL                                                 AS pause_reason
       FROM dunning_counters d
                JOIN subscriptions s on d.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND o.state NOT IN ('cancelled', 'refunded')
@@ -291,11 +330,17 @@ FROM (SELECT md5(
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                  END                                                              AS revenue_type,
-             coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
-             coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
-             coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                                                   AS interval_days,
-             NULL                                                                 AS plan_id,
+             coalesce((o.subtotal_price * 100)::bigint, 0)                        AS price_cents,
+             coalesce((o.total_tax * 100)::bigint, 0)                             AS tax_cents,
+             coalesce((s.delivery_price_amount * 100)::bigint, 0)                 AS shipping_cents,
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                                              AS interval_days,
+             bp.id                                                                AS plan_id,
              NULL                                                                 AS region,
              o.source                                                             AS channel,
              o.currency                                                           AS currency,
@@ -305,6 +350,7 @@ FROM (SELECT md5(
       FROM dunning_counters d
                JOIN subscriptions s on d.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND failed_cycles = max_failed_cycles
@@ -325,30 +371,37 @@ FROM (SELECT md5(
                              s.id::text,
                              o.id::text
                      )
-             )                                          AS event_id,
-             'free-soul-sistas'                         AS tenant_id,
-             d.updated_at                               AS event_time,
-             'dunning_recovered'                        AS event_type,
-             'active'                                   AS status_after,
-             d.subscription_id                          AS subscription_id,
-             s.customer_id                              AS customer_id,
+             )                                                    AS event_id,
+             'free-soul-sistas'                                   AS tenant_id,
+             d.updated_at                                         AS event_time,
+             'dunning_recovered'                                  AS event_type,
+             'active'                                             AS status_after,
+             d.subscription_id                                    AS subscription_id,
+             s.customer_id                                        AS customer_id,
              CASE
                  WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                 END                                    AS revenue_type,
+                 END                                              AS revenue_type,
              coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
-             30                                         AS interval_days,
-             NULL                                       AS plan_id,
-             NULL                                       AS region,
-             o.source                                   AS channel,
-             o.currency                                 AS currency,
-             NULL                                       AS cancellation_reason,
-             NULL                                       AS pause_reason
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                                              AS interval_days,
+             bp.id                                                AS plan_id,
+             NULL                                                 AS region,
+             o.source                                             AS channel,
+             o.currency                                           AS currency,
+             NULL                                                 AS cancellation_reason,
+             NULL                                                 AS pause_reason
       FROM dunning_counters d
                JOIN subscriptions s on d.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND failed_cycles < max_failed_cycles
@@ -376,8 +429,14 @@ FROM (SELECT md5(
              coalesce((sl.price * 100)::bigint, 0) AS price_cents,
              0                                     AS tax_cents,
              0                                     AS shipping_cents,
-             30                                    AS interval_days,
-             NULL                                  AS plan_id,
+             CASE
+                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                 ELSE 30
+                 END                               AS interval_days,
+             bp.id                                 AS plan_id,
              NULL                                  AS region,
              s.source                              AS channel,
              s.currency_code                       AS currency,
@@ -385,8 +444,7 @@ FROM (SELECT md5(
              NULL                                  AS pause_reason
       FROM subscriptions s
                JOIN subscription_lines sl on s.id = sl.subscription_id
+               LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
       WHERE sl.deleted_at is NULL
-        and sl.one_off = true
-
-      ) AS combined_events
+        and sl.one_off = true) AS combined_events
 ORDER BY event_time DESC;
