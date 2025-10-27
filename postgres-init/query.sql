@@ -352,5 +352,41 @@ FROM (SELECT md5(
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND failed_cycles < max_failed_cycles
-        AND o.state NOT IN ('cancelled', 'refunded')) AS combined_events
+        AND o.state NOT IN ('cancelled', 'refunded')
+
+      UNION ALL
+
+      SELECT md5(
+                     concat_ws(
+                             '::',
+                             'free-soul-sistas',
+                             sl.created_at::text,
+                             'order_created',
+                             'addon',
+                             s.id::text
+                     )
+             )                                     AS event_id,
+             'free-soul-sistas'                    AS tenant_id,
+             sl.created_at                         AS event_time,
+             'order_created'                       AS event_type,
+             'active'                              AS status_after,
+             s.id                                  AS subscription_id,
+             s.customer_id                         AS customer_id,
+             'addon'                               AS revenue_type,
+             coalesce((sl.price * 100)::bigint, 0) AS price_cents,
+             0                                     AS tax_cents,
+             0                                     AS shipping_cents,
+             30                                    AS interval_days,
+             NULL                                  AS plan_id,
+             NULL                                  AS region,
+             s.source                              AS channel,
+             s.currency_code                       AS currency,
+             NULL                                  AS cancellation_reason,
+             NULL                                  AS pause_reason
+      FROM subscriptions s
+               JOIN subscription_lines sl on s.id = sl.subscription_id
+      WHERE sl.deleted_at is NULL
+        and sl.one_off = true
+
+      ) AS combined_events
 ORDER BY event_time DESC;
