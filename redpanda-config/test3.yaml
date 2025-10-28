@@ -1,0 +1,843 @@
+# ============================================
+# Redpanda Connect: PostgresQL → ClickHouse (Deduped + Batched)
+# ============================================
+input:
+  generate:
+    interval: "60s" # Configure batch time
+    mapping: "root = {}"
+  processors:
+    # Order Created
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'order_created'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.order_created = this
+          - log:
+              level: INFO
+              message: "ORDER_CREATED: Fetching rows with date >= ${! this.times.order_created.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                o.created_at::text,
+                'order_created',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                WHEN so.subscription_id IS NULL THEN 'onetime'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                o.created_at                                         AS event_time,
+                'order_created'                                      AS event_type,
+                'active'                                             AS status_after,
+                so.subscription_id                                   AS subscription_id,
+                o.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                WHEN so.subscription_id is NULL THEN 'onetime'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                                 AS plan_id,
+                NULL                                                 AS region,
+                o.source                                             AS channel,
+                o.currency                                           AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM orders o
+                LEFT JOIN subscription_orders so
+                ON o.id = so.order_id
+                LEFT JOIN subscriptions s
+                ON so.subscription_id = s.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE o.state NOT IN ('cancelled', 'refunded')
+                AND o.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.order_created.event_time]
+        result_map: "root.order_created = this"
+    # Sub Created
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'sub_created'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.sub_created = this
+          - log:
+              level: INFO
+              message: "SUB_CREATED: Fetching rows with date >= ${! this.times.sub_created.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                s.created_at::text,
+                'sub_created',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                s.created_at                                         AS event_time,
+                'sub_created'                                        AS event_type,
+                'active'                                             AS status_after,
+                s.id                                                 AS subscription_id,
+                s.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                                 AS plan_id,
+                NULL                                                 AS region,
+                s.source                                             AS channel,
+                s.currency_code                                      AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM subscriptions s
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE o.state NOT IN ('cancelled', 'refunded')
+                AND s.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.sub_created.event_time]
+        result_map: "root.sub_created = this"
+    # Sub Paused
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'sub_paused'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.sub_paused = this
+          - log:
+              level: INFO
+              message: "SUB_PAUSED: Fetching rows with date >= ${! this.times.sub_paused.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                st.created_at::text,
+                'sub_paused',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                st.created_at                                        AS event_time,
+                'sub_paused'                                         AS event_type,
+                'paused'                                             AS status_after,
+                st.subscription_id                                   AS subscription_id,
+                s.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                               AS plan_id,
+                NULL                                                 AS region,
+                s.source                                             AS channel,
+                s.currency_code                                      AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM subscription_transitions st
+                JOIN subscriptions s ON st.subscription_id = s.id
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE to_state IN ('paused', 'skipped')
+                AND o.state NOT IN ('cancelled', 'refunded')
+                AND st.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.sub_paused.event_time]
+        result_map: "root.sub_paused = this"
+    # Sub Cancelled
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'sub_cancelled'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.sub_cancelled = this
+          - log:
+              level: INFO
+              message: "SUB_CANCELLED: Fetching rows with date >= ${! this.times.sub_cancelled.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                st.created_at::text,
+                'sub_cancelled',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                st.created_at                                        AS event_time,
+                'sub_cancelled'                                      AS event_type,
+                'cancelled'                                          AS status_after,
+                st.subscription_id                                   AS subscription_id,
+                s.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                               AS plan_id,
+                NULL                                                 AS region,
+                s.source                                             AS channel,
+                s.currency_code                                      AS currency,
+                coalesce(s.cancellation_reason, 'Other')             AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM subscription_transitions st
+                JOIN subscriptions s ON st.subscription_id = s.id
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE to_state IN ('cancelled', 'failed')
+                AND o.state NOT IN ('cancelled', 'refunded')
+                AND st.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.sub_cancelled.event_time]
+        result_map: "root.sub_cancelled = this"
+    # Sub Resumed / Sub Reactivated
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type IN ('sub_resumed', 'sub_reactivated')
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.sub_resumed_reactivated = this
+          - log:
+              level: INFO
+              message: "SUB_RESUMED_REACTIVATED: Fetching rows with date >= ${! this.times.sub_resumed_reactivated.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                curr_st.created_at::text,
+                CASE prev_st.to_state
+                WHEN 'paused' THEN 'sub_resumed'
+                WHEN 'cancelled' THEN 'sub_reactivated'
+                END,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                curr_st.created_at                                   AS event_time,
+                CASE prev_st.to_state
+                WHEN 'paused' THEN 'sub_resumed'
+                WHEN 'cancelled' THEN 'sub_reactivated'
+                END                                              AS event_type,
+                'active'                                             AS status_after,
+                curr_st.subscription_id                              AS subscription_id,
+                s.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                              AS plan_id,
+                NULL                                                 AS region,
+                s.source                                             AS channel,
+                s.currency_code                                      AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM subscription_transitions curr_st
+                JOIN subscription_transitions prev_st
+                ON prev_st.subscription_id = curr_st.subscription_id
+                AND prev_st.sort_key = curr_st.sort_key - 10
+                JOIN subscriptions s ON curr_st.subscription_id = s.id
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE curr_st.to_state = 'active'
+                AND curr_st.sort_key != 10
+                AND prev_st.to_state IN ('paused', 'cancelled')
+                AND o.state NOT IN ('cancelled', 'refunded')
+                AND curr_st.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.sub_resumed_reactivated.event_time]
+        result_map: "root.sub_resumed_reactivated = this"
+    # Dunning Entered
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'dunning_entered'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.dunning_entered = this
+          - log:
+              level: INFO
+              message: "DUNNING_ENTERED: Fetching rows with date >= ${! this.times.dunning_entered.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                d.created_at::text,
+                'dunning_entered',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                d.created_at                                         AS event_time,
+                'dunning_entered'                                    AS event_type,
+                'dunning'                                            AS status_after,
+                d.subscription_id                                    AS subscription_id,
+                s.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                              AS plan_id,
+                NULL                                                 AS region,
+                o.source                                             AS channel,
+                o.currency                                           AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM dunning_counters d
+                JOIN subscriptions s on d.subscription_id = s.id
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE d.type = 'FailedBillingCounter'
+                AND d.state = 'closed'
+                AND o.state NOT IN ('cancelled', 'refunded')
+                AND d.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.dunning_entered.event_time]
+        result_map: "root.dunning_entered = this"
+    # Dunning Exited
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'dunning_exited'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.dunning_exited = this
+          - log:
+              level: INFO
+              message: "DUNNING_EXITED: Fetching rows with date >= ${! this.times.dunning_exited.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                d.updated_at::text,
+                'dunning_exited',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                                    AS event_id,
+                'free-soul-sistas'                                                   AS tenant_id,
+                d.updated_at                                                         AS event_time,
+                'dunning_exited'                                                     AS event_type,
+                'cancelled'                                                          AS status_after,
+                d.subscription_id                                                    AS subscription_id,
+                s.customer_id                                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)                        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)                             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0)                 AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                                              AS interval_days,
+                sp.name                                                               AS plan_id,
+                NULL                                                                 AS region,
+                o.source                                                             AS channel,
+                o.currency                                                           AS currency,
+                coalesce(s.cancellation_reason,
+                'Failed due to exceeding maximum allowed failed billings.') AS cancellation_reason,
+                NULL                                                                 AS pause_reason
+                FROM dunning_counters d
+                JOIN subscriptions s on d.subscription_id = s.id
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE d.type = 'FailedBillingCounter'
+                AND d.state = 'closed'
+                AND failed_cycles = max_failed_cycles
+                AND o.state NOT IN ('cancelled', 'refunded')
+                AND d.updated_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.dunning_exited.event_time]
+        result_map: "root.dunning_exited = this"
+    # Dunning Recovered
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'dunning_recovered'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.dunning_recovered = this
+          - log:
+              level: INFO
+              message: "DUNNING_RECOVERED: Fetching rows with date >= ${! this.times.dunning_recovered.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                d.updated_at::text,
+                'dunning_recovered',
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END,
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                d.updated_at                                         AS event_time,
+                'dunning_recovered'                                  AS event_type,
+                'active'                                             AS status_after,
+                d.subscription_id                                    AS subscription_id,
+                s.customer_id                                        AS customer_id,
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
+                WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
+                END                                              AS revenue_type,
+                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                              AS interval_days,
+                sp.name                                               AS plan_id,
+                NULL                                                 AS region,
+                o.source                                             AS channel,
+                o.currency                                           AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM dunning_counters d
+                JOIN subscriptions s on d.subscription_id = s.id
+                JOIN orders o on s.origin_order_id = o.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE d.type = 'FailedBillingCounter'
+                AND d.state = 'closed'
+                AND failed_cycles < max_failed_cycles
+                AND o.state NOT IN ('cancelled', 'refunded')
+                AND d.updated_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.dunning_recovered.event_time]
+        result_map: "root.dunning_recovered = this"
+    # Order Created Addon
+    - branch:
+        processors:
+          - sql_raw:
+              driver: clickhouse
+              dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+              query: |
+                SELECT event_time
+                FROM events_raw
+                WHERE event_type = 'order_created'
+                AND revenue_type = 'addon'
+                ORDER BY event_time DESC
+                LIMIT 1;
+          - mapping: |
+              root = this
+          - unarchive:
+              format: json_array
+          - mapping: |
+              root.times.order_created_addon = this
+          - log:
+              level: INFO
+              message: "ORDER CREATED ADDON: Fetching rows with date >= ${! this.times.order_created_addon.event_time }"
+          - sql_raw:
+              driver: postgres
+              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              query: |
+                SELECT *
+                FROM (
+                SELECT md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                sl.created_at::text,
+                'order_created',
+                'addon',
+                s.id::text
+                )
+                )                                     AS event_id,
+                'free-soul-sistas'                    AS tenant_id,
+                sl.created_at                         AS event_time,
+                'order_created'                       AS event_type,
+                'active'                              AS status_after,
+                s.id                                  AS subscription_id,
+                s.customer_id                         AS customer_id,
+                'addon'                               AS revenue_type,
+                coalesce((sl.price * 100)::bigint, 0) AS price_cents,
+                0                                     AS tax_cents,
+                0                                     AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                               AS interval_days,
+                sp.name                                AS plan_id,
+                NULL                                  AS region,
+                s.source                              AS channel,
+                s.currency_code                       AS currency,
+                NULL                                  AS cancellation_reason,
+                NULL                                  AS pause_reason
+                FROM subscriptions s
+                JOIN subscription_lines sl on s.id = sl.subscription_id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE sl.deleted_at is NULL
+                and sl.one_off = true
+                AND sl.created_at > $1
+                ) AS query
+                ORDER BY event_time DESC;
+              args_mapping: |
+                root = [this.times.order_created_addon.event_time]
+        result_map: "root.order_created_addon = this"
+
+    - mapping: |
+        root.queries = {
+          "order_created": this.order_created,
+          "sub_created": this.sub_created,
+          "sub_paused": this.sub_paused,
+          "sub_cancelled": this.sub_cancelled,
+          "sub_resumed_reactivated": this.sub_resumed_reactivated,
+          "dunning_entered": this.dunning_entered,
+          "dunning_exited": this.dunning_exited,
+          "dunning_recovered": this.dunning_recovered,
+          "order_created_addon": this.order_created_addon
+        }
+
+pipeline:
+  processors:
+    #    - log:
+    #        level: INFO
+    #        message: "CANCELLED: ${! this.queries.sub_cancelled }}"
+    - mapping: |
+        root = this.queries.order_created.append(
+        this.queries.sub_created,
+        this.queries.sub_paused, 
+        this.queries.sub_cancelled, 
+        this.queries.sub_resumed_reactivated, 
+        this.queries.dunning_entered,
+        this.queries.dunning_exited,
+        this.queries.dunning_recovered,
+        this.queries.order_created_addon
+        )
+    #    - log:
+    #        level: INFO
+    #        message: "TESTE: ${! this }}"
+    - mapping: |
+        root = if this.type() == "array" {
+          this.flatten().filter(el -> el != null)
+        } else {
+          this
+        }
+    - unarchive:
+        format: json_array
+    - mapping: |
+        root = this
+    - dedupe:
+        cache: keycache
+        key: ${! this.event_id }
+
+output:
+  sql_insert:
+    driver: clickhouse
+    dsn: "clickhouse://${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}@clickhouse:9000/analytics"
+    table: events_raw
+    columns:
+      - tenant_id
+      - event_time
+      - event_type
+      - status_after
+      - subscription_id
+      - customer_id
+      - revenue_type
+      - price_cents
+      - shipping_cents
+      - tax_cents
+      - interval_days
+      - plan_id
+      - region
+      - channel
+      - currency
+      - cancellation_reason
+      - pause_reason
+    args_mapping: |
+      root = [
+        this.tenant_id,
+        this.event_time,
+        this.event_type,
+        this.status_after,
+        this.subscription_id,
+        this.customer_id,
+        this.revenue_type,
+        this.price_cents,
+        this.shipping_cents,
+        this.tax_cents,
+        this.interval_days,
+        this.plan_id,
+        this.region,
+        this.channel,
+        this.currency,
+        this.cancellation_reason,
+        this.pause_reason
+      ]
+    batching:
+      count: 30000
+      period: 2s
+
+cache_resources:
+  # Redis cache to track processed keys
+  - label: keycache
+    redis:
+      url: redis://redis:6379
+      default_ttl: 300s
+      retries:
+        initial_interval: 500ms
+        max_interval: 1s
+        max_elapsed_time: 5s
