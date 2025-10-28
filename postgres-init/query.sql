@@ -35,7 +35,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                                 AS plan_id,
              NULL                                                 AS region,
              o.source                                             AS channel,
              o.currency                                           AS currency,
@@ -47,6 +47,7 @@ FROM (SELECT md5(
                LEFT JOIN subscriptions s
                          ON so.subscription_id = s.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE o.state NOT IN ('cancelled', 'refunded')
 
       UNION ALL
@@ -85,7 +86,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                                 AS plan_id,
              NULL                                                 AS region,
              s.source                                             AS channel,
              s.currency_code                                      AS currency,
@@ -94,6 +95,7 @@ FROM (SELECT md5(
       FROM subscriptions s
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE o.state NOT IN ('cancelled', 'refunded')
 
       UNION ALL
@@ -132,7 +134,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                               AS plan_id,
              NULL                                                 AS region,
              s.source                                             AS channel,
              s.currency_code                                      AS currency,
@@ -142,6 +144,7 @@ FROM (SELECT md5(
                JOIN subscriptions s ON st.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE to_state IN ('paused', 'skipped')
         AND o.state NOT IN ('cancelled', 'refunded')
 
@@ -181,7 +184,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                               AS plan_id,
              NULL                                                 AS region,
              s.source                                             AS channel,
              s.currency_code                                      AS currency,
@@ -191,6 +194,7 @@ FROM (SELECT md5(
                JOIN subscriptions s ON st.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE to_state IN ('cancelled', 'failed')
         AND o.state NOT IN ('cancelled', 'refunded')
 
@@ -236,7 +240,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                              AS plan_id,
              NULL                                                 AS region,
              s.source                                             AS channel,
              s.currency_code                                      AS currency,
@@ -249,6 +253,7 @@ FROM (SELECT md5(
                JOIN subscriptions s ON curr_st.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE curr_st.to_state = 'active'
         AND curr_st.sort_key != 10
         AND prev_st.to_state IN ('paused', 'cancelled')
@@ -290,7 +295,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                             AS plan_id,
              NULL                                                 AS region,
              o.source                                             AS channel,
              o.currency                                           AS currency,
@@ -300,6 +305,7 @@ FROM (SELECT md5(
                JOIN subscriptions s on d.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND o.state NOT IN ('cancelled', 'refunded')
@@ -340,7 +346,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                                              AS interval_days,
-             bp.id                                                                AS plan_id,
+             sp.name                                                               AS plan_id,
              NULL                                                                 AS region,
              o.source                                                             AS channel,
              o.currency                                                           AS currency,
@@ -351,6 +357,7 @@ FROM (SELECT md5(
                JOIN subscriptions s on d.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND failed_cycles = max_failed_cycles
@@ -392,7 +399,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                                              AS interval_days,
-             bp.id                                                AS plan_id,
+             sp.name                                               AS plan_id,
              NULL                                                 AS region,
              o.source                                             AS channel,
              o.currency                                           AS currency,
@@ -402,6 +409,7 @@ FROM (SELECT md5(
                JOIN subscriptions s on d.subscription_id = s.id
                JOIN orders o on s.origin_order_id = o.id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE d.type = 'FailedBillingCounter'
         AND d.state = 'closed'
         AND failed_cycles < max_failed_cycles
@@ -436,7 +444,7 @@ FROM (SELECT md5(
                  WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                  ELSE 30
                  END                               AS interval_days,
-             bp.id                                 AS plan_id,
+             sp.name                                AS plan_id,
              NULL                                  AS region,
              s.source                              AS channel,
              s.currency_code                       AS currency,
@@ -445,6 +453,7 @@ FROM (SELECT md5(
       FROM subscriptions s
                JOIN subscription_lines sl on s.id = sl.subscription_id
                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+               LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
       WHERE sl.deleted_at is NULL
         and sl.one_off = true) AS combined_events
 ORDER BY event_time DESC;

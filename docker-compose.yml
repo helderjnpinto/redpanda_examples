@@ -3,7 +3,6 @@ version: "3.8"
 services:
   db:
     image: postgres:16
-    shm_size: 1g
     environment:
       POSTGRES_DB: shopify_data_pruned
       POSTGRES_USER: postgres
@@ -41,7 +40,7 @@ services:
         "/config.yaml",
       ] # substitui ENTRYPOINT
     volumes:
-      - ./redpanda-config/test.yaml:/config.yaml
+      - ./redpanda-config/test3.yaml:/config.yaml
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
