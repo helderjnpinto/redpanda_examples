@@ -31,3 +31,9 @@ go.work.sum
 # .idea/
 # .vscode/
 /shopify_data_pruned.sql
+/line_items.sql
+/pruned_november.sql
+/shipments_free_soul.csv
+
+.idea
+.DS_Store

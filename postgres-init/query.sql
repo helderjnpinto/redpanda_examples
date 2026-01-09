@@ -25,7 +25,7 @@ FROM (SELECT md5(
                  WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                  WHEN so.subscription_id is NULL THEN 'onetime'
                  END                                              AS revenue_type,
-             coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+             coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents, --- subtrair a tax
              coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
              coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
              CASE

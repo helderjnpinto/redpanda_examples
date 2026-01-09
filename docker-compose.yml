@@ -40,7 +40,7 @@ services:
         "/config.yaml",
       ] # substitui ENTRYPOINT
     volumes:
-      - ./redpanda-config/test3.yaml:/config.yaml
+      - ./redpanda-config/test2.yaml:/config.yaml
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
