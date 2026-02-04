@@ -30,11 +30,12 @@ input:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
-                SELECT md5(
+                SELECT DISTINCT ON (o.id)
+                md5(
                 concat_ws(
                 '::',
                 'free-soul-sistas',
@@ -58,44 +59,62 @@ input:
                 CASE
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
-                WHEN so.subscription_id is NULL THEN 'onetime'
-                END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
-                coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
-                coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
+                WHEN so.subscription_id IS NULL THEN 'onetime'
+                END                                                  AS revenue_type,
+
+                COALESCE((
+                CASE
+                WHEN 'Subscription Recurring Order' = ANY (o.tags)
+                THEN ((o.total_price - o.total_tax - coalesce(sh.total, 0)) - COALESCE(li.total, 0))
+                ELSE (o.total_price - o.total_tax - coalesce(sh.total, 0))
+                END * 100
+                )::bigint, 0)                                        AS price_cents,
+
+                COALESCE((o.total_tax * 100)::bigint, 0)             AS tax_cents,
+                COALESCE((sh.total * 100)::bigint, 0) AS shipping_cents,
+
                 CASE
                 WHEN bp.interval = 'DAY' THEN bp.frequency * 1
                 WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
                 WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
                 WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
                 ELSE 30
-                END                                              AS interval_days,
-                sp.name                                                 AS plan_id,
+                END                                                  AS interval_days,
+
+                sp.name                                              AS plan_id,
                 NULL                                                 AS region,
                 o.source                                             AS channel,
                 o.currency                                           AS currency,
                 NULL                                                 AS cancellation_reason,
                 NULL                                                 AS pause_reason
                 FROM orders o
-                LEFT JOIN subscription_orders so
-                ON o.id = so.order_id
-                LEFT JOIN subscriptions s
-                ON so.subscription_id = s.id
+                LEFT JOIN shipments sh on sh.order_id = o.id
+                LEFT JOIN subscription_orders so ON o.id = so.order_id
+                LEFT JOIN subscriptions s ON so.subscription_id = s.id
                 LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
                 LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
-                WHERE o.state NOT IN ('cancelled', 'refunded')
+                LEFT JOIN (
+                SELECT order_id, SUM(total) AS total
+                FROM line_items
+                WHERE deleted_at is null
+                and properties LIKE '%{"name"=>"one_off", "value"=>"true"}%'
+                OR properties LIKE '%{"value"=>"true", "name"=>"one_off"}%'
+                GROUP BY order_id
+                ) li ON o.id = li.order_id
+                WHERE o.state NOT IN ('cancelled')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [25000, this.batch_number * 25000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.order_created = this"
     # Sub Created
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -123,7 +142,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
                 CASE
@@ -145,17 +164,18 @@ input:
                 LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
                 WHERE o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.sub_created = this"
     # Sub Paused
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -183,7 +203,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
                 CASE
@@ -207,17 +227,18 @@ input:
                 WHERE to_state IN ('paused', 'skipped')
                 AND o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.sub_paused = this"
     # Sub Cancelled
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -245,7 +266,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
                 CASE
@@ -269,17 +290,18 @@ input:
                 WHERE to_state IN ('cancelled', 'failed')
                 AND o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.sub_cancelled = this"
     # Sub Resumed / Sub Reactivated
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -313,7 +335,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
                 CASE
@@ -342,17 +364,18 @@ input:
                 AND prev_st.to_state IN ('paused', 'cancelled')
                 AND o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.sub_resumed_reactivated = this"
     # Dunning Entered
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -380,7 +403,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
                 CASE
@@ -405,17 +428,18 @@ input:
                 AND d.state = 'closed'
                 AND o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.dunning_entered = this"
     # Dunning Exited
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -443,7 +467,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)                        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)                             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0)                 AS shipping_cents,
                 CASE
@@ -470,17 +494,18 @@ input:
                 AND failed_cycles = max_failed_cycles
                 AND o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.dunning_exited = this"
     # Dunning Recovered
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -508,7 +533,7 @@ input:
                 WHEN 'Subscription Recurring Order' = ANY (o.tags) THEN 'recurring'
                 WHEN 'Subscription First Order' = ANY (o.tags) THEN 'first'
                 END                                              AS revenue_type,
-                coalesce((o.subtotal_price * 100)::bigint, 0)        AS price_cents,
+                coalesce(((o.total_price - o.total_tax - coalesce(s.delivery_price_amount, 0)) * 100)::bigint, 0)        AS price_cents,
                 coalesce((o.total_tax * 100)::bigint, 0)             AS tax_cents,
                 coalesce((s.delivery_price_amount * 100)::bigint, 0) AS shipping_cents,
                 CASE
@@ -534,17 +559,79 @@ input:
                 AND failed_cycles < max_failed_cycles
                 AND o.state NOT IN ('cancelled', 'refunded')
                 ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
+                root = [2500, this.batch_number * 2500]
         result_map: "root.dunning_recovered = this"
     # Order Created Addon
     - branch:
         processors:
           - sql_raw:
               driver: postgres
-              dsn: postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
+              query: |
+                select *
+                from (
+                SELECT
+                md5(
+                concat_ws(
+                '::',
+                'free-soul-sistas',
+                li.updated_at::text,
+                'order_created',
+                'addon',
+                s.id::text,
+                o.id::text
+                )
+                )                                                    AS event_id,
+                'free-soul-sistas'           AS tenant_id,
+                li.updated_at                                        AS event_time,
+                'order_created'                                      AS event_type,
+                'active'                                             AS status_after,
+                so.subscription_id                                   AS subscription_id,
+                o.customer_id                                        AS customer_id,
+                'addon'                                              AS revenue_type,
+                COALESCE((li.total * 100)::bigint, 0) AS price_cents,
+                0             AS tax_cents,
+                0 AS shipping_cents,
+                CASE
+                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
+                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
+                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
+                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
+                ELSE 30
+                END                                                  AS interval_days,
+                sp.name                                              AS plan_id,
+                NULL                                                 AS region,
+                o.source                                             AS channel,
+                o.currency                                           AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                from line_items li
+                LEFT JOIN orders o on o.id = li.order_id
+                LEFT JOIN subscription_orders so ON o.id = so.order_id
+                LEFT JOIN subscriptions s ON so.subscription_id = s.id
+                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
+                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
+                WHERE li.deleted_at is null
+                and li.properties LIKE '%{"name"=>"one_off", "value"=>"true"}%'
+                OR li.properties LIKE '%{"value"=>"true", "name"=>"one_off"}%'
+                ) as query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
+                ORDER BY event_time DESC
+                LIMIT $1 OFFSET $2;
+              args_mapping: |
+                root = [2500, this.batch_number * 2500]
+        result_map: "root.order_created_addon = this"
+
+    # Customer Created
+    - branch:
+        processors:
+          - sql_raw:
+              driver: postgres
+              dsn: "postgres://postgres:password@db:5432/shopify_data_pruned?sslmode=disable"
               query: |
                 SELECT *
                 FROM (
@@ -552,46 +639,36 @@ input:
                 concat_ws(
                 '::',
                 'free-soul-sistas',
-                sl.created_at::text,
-                'order_created',
-                'addon',
-                s.id::text
+                c.created_at::text,
+                'customer_created',
+                c.id::text
                 )
-                )                                     AS event_id,
-                'free-soul-sistas'                    AS tenant_id,
-                sl.created_at                         AS event_time,
-                'order_created'                       AS event_type,
-                'active'                              AS status_after,
-                s.id                                  AS subscription_id,
-                s.customer_id                         AS customer_id,
-                'addon'                               AS revenue_type,
-                coalesce((sl.price * 100)::bigint, 0) AS price_cents,
-                0                                     AS tax_cents,
-                0                                     AS shipping_cents,
-                CASE
-                WHEN bp.interval = 'DAY' THEN bp.frequency * 1
-                WHEN bp.interval = 'WEEK' THEN bp.frequency * 7
-                WHEN bp.interval = 'MONTH' THEN bp.frequency * 30
-                WHEN bp.interval = 'YEAR' THEN bp.frequency * 365
-                ELSE 30
-                END                               AS interval_days,
-                sp.name                                AS plan_id,
-                NULL                                  AS region,
-                s.source                              AS channel,
-                s.currency_code                       AS currency,
-                NULL                                  AS cancellation_reason,
-                NULL                                  AS pause_reason
-                FROM subscriptions s
-                JOIN subscription_lines sl on s.id = sl.subscription_id
-                LEFT JOIN billing_policies bp ON bp.subscription_id = s.id
-                LEFT JOIN selling_plans sp ON sp.id = bp.selling_plan_id
-                WHERE sl.deleted_at is NULL
-                and sl.one_off = true ) AS query
+                )                                                    AS event_id,
+                'free-soul-sistas'                                   AS tenant_id,
+                c.created_at                                         AS event_time,
+                'customer_created'                                   AS event_type,
+                'active'                                             AS status_after,
+                NULL                                                 AS subscription_id,
+                c.id                                                 AS customer_id,
+                'first'                                              AS revenue_type,
+                0                                                    AS price_cents,
+                0                                                    AS tax_cents,
+                0                                                    AS shipping_cents,
+                0                                                    AS interval_days,
+                NULL                                                 AS plan_id,
+                NULL                                                 AS region,
+                NULL                                                 AS channel,
+                NULL                                                 AS currency,
+                NULL                                                 AS cancellation_reason,
+                NULL                                                 AS pause_reason
+                FROM customers c
+                ) AS query
+                WHERE event_time >= '2025-09-01' and event_time < '2025-10-01'
                 ORDER BY event_time DESC
                 LIMIT $1 OFFSET $2;
               args_mapping: |
-                root = [5000, this.batch_number * 5000]
-        result_map: "root.order_created_addon = this"
+                root = [2500, this.batch_number * 2500]
+        result_map: "root.customer_created = this"
 
     - mapping: |
         root.queries = {
@@ -603,28 +680,24 @@ input:
           "dunning_entered": this.dunning_entered,
           "dunning_exited": this.dunning_exited,
           "dunning_recovered": this.dunning_recovered,
-          "order_created_addon": this.order_created_addon
+          "order_created_addon": this.order_created_addon,
+          "customer_created": this.customer_created
         }
 
 pipeline:
   processors:
-#    - log:
-#        level: INFO
-#        message: "CANCELLED: ${! this.queries.sub_cancelled }}"
     - mapping: |
-        root = this.queries.order_created.append(
-        this.queries.sub_created,
-        this.queries.sub_paused, 
-        this.queries.sub_cancelled, 
-        this.queries.sub_resumed_reactivated, 
-        this.queries.dunning_entered,
-        this.queries.dunning_exited,
-        this.queries.dunning_recovered,
-        this.queries.order_created_addon
+        root = this.queries.order_created.or([]).append(
+        this.queries.sub_created.or([]),
+        this.queries.sub_paused.or([]), 
+        this.queries.sub_cancelled.or([]), 
+        this.queries.sub_resumed_reactivated.or([]), 
+        this.queries.dunning_entered.or([]),
+        this.queries.dunning_exited.or([]),
+        this.queries.dunning_recovered.or([]),
+        this.queries.order_created_addon.or([]),
+        this.queries.customer_created.or([])
         )
-#    - log:
-#        level: INFO
-#        message: "TESTE: ${! this }}"
     - mapping: |
         root = if this.type() == "array" {
           this.flatten().filter(el -> el != null)
@@ -639,14 +712,14 @@ pipeline:
           processors:
             - log:
                 level: INFO
-                message: "No rows returned from database. Shutting down."
+                message: "😴 No rows returned from database. Exited"
             - command:
                 name: kill
                 args_mapping: '[ "1" ]'
-    - unarchive:
-        format: json_array
     - mapping: |
         root = this
+    - unarchive:
+        format: json_array
     - dedupe:
         cache: keycache
         key: ${! this.event_id }
@@ -658,6 +731,7 @@ output:
     table: events_raw
     columns:
       - tenant_id
+      - event_id
       - event_time
       - event_type
       - status_after
@@ -677,6 +751,7 @@ output:
     args_mapping: |
       root = [
         this.tenant_id,
+        this.event_id,
         this.event_time,
         this.event_type,
         this.status_after,
@@ -703,7 +778,7 @@ cache_resources:
   - label: keycache
     redis:
       url: redis://redis:6379
-      default_ttl: 300s
+      default_ttl: 5s
       retries:
         initial_interval: 500ms
         max_interval: 1s
